@@ -1,0 +1,51 @@
+---
+boutique_repo: https://github.com/iankisali/microservice-deployment.git
+boutique_revision: main
+boutique_src: /opt/online-boutique-charts
+boutique_namespace: microservice
+boutique_helm_binary: /usr/local/bin/helm
+boutique_kubeconfig: /etc/kubernetes/admin.conf
+boutique_timeout: 10m
+
+# Keep one copy of each application component on the lab worker.
+boutique_common:
+  appReplicas: 1
+
+boutique_releases:
+  - name: rediscart
+    chart: redis
+    values_file: redis-values.yaml
+
+  - name: emailservice
+    values_file: email-service-values.yaml
+
+  - name: currencyservice
+    values_file: currency-service-values.yaml
+
+  - name: paymentservice
+    values_file: payment-service-values.yaml
+
+  - name: productcatalogservice
+    values_file: productcatalog-service-values.yaml
+
+  - name: shippingservice
+    values_file: shipping-service-values.yaml
+
+  - name: adservice
+    values_file: ad-service-values.yaml
+
+  - name: cartservice
+    values_file: cart-service-values.yaml
+
+  - name: recommendationservice
+    values_file: recommendation-service-values.yaml
+
+  - name: checkoutservice
+    values_file: checkout-service-values.yaml
+    overrides:
+      appName: checkoutservice
+
+  - name: frontendservice
+    values_file: frontend-values.yaml
+    overrides:
+      serviceType: NodePort

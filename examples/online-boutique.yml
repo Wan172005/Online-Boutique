@@ -1,0 +1,64 @@
+---
+- name: Deploy Online Boutique
+  hosts: k8s_control_plane
+  become: true
+
+  vars_files:
+    - ../vars/microservices.yml
+
+  pre_tasks:
+    - name: Install Git
+      ansible.builtin.apt:
+        name: git
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Prepare Python Kubernetes client
+      ansible.builtin.import_tasks: tasks/client.yml
+
+  tasks:
+    - name: Clone upstream charts
+      ansible.builtin.git:
+        repo: "{{ boutique_repo }}"
+        dest: "{{ boutique_src }}"
+        version: "{{ boutique_revision }}"
+        update: true
+
+    - name: Deploy each Online Boutique release
+      kubernetes.core.helm:
+        name: "{{ item.name }}"
+        binary_path: "{{ boutique_helm_binary }}"
+        kubeconfig: "{{ boutique_kubeconfig }}"
+        chart_ref: >-
+          {{ boutique_src }}/chart/{{ item.chart | default('microservice') }}
+        release_namespace: "{{ boutique_namespace }}"
+        create_namespace: true
+        state: present
+        values_files:
+          - "{{ boutique_src }}/values/{{ item.values_file }}"
+        values: >-
+          {{
+            boutique_common
+            | combine(item.overrides | default({}), recursive=true)
+          }}
+        wait: true
+        timeout: "{{ boutique_timeout }}"
+      loop: "{{ boutique_releases }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Read frontend Service
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ boutique_kubeconfig }}"
+        api_version: v1
+        kind: Service
+        namespace: "{{ boutique_namespace }}"
+        name: frontend
+      register: boutique_frontend
+
+    - name: Display application address
+      ansible.builtin.debug:
+        msg: >-
+          Online Boutique:
+          http://{{ hostvars[groups['k8s_workers'][0]].ansible_host }}:{{ boutique_frontend.resources[0].spec.ports[0].nodePort }}/

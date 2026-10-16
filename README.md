@@ -53,6 +53,31 @@ Kubeconfig xuất về `artifacts/admin.conf` trỏ `https://127.0.0.1:6443` m�
 
 **Minh chứng báo cáo:** PLAY RECAP, hai node Ready với INTERNAL-IP đúng, tất cả Pod `kube-system` Ready và phiên bản Helm.
 
+## Part 3 — Deploy the Online Boutique
+
+Theo PDF trang 4–5, triển khai bằng module Helm của Ansible, không chỉnh chart upstream. File thực hiện là [examples/online-boutique.yml](examples/online-boutique.yml); xem [examples/README.md](examples/README.md) để giải thích từng bước.
+
+```bash
+ansible-playbook examples/online-boutique.yml --syntax-check
+ansible-playbook examples/online-boutique.yml
+```
+
+Playbook chạy trên master, chuẩn bị Git và Python client trong `/opt/kubernetes-client`, clone repository `iankisali/microservice-deployment` vào `/opt/online-boutique-charts`, rồi cài 11 release vào namespace `microservice`. Redis dùng `chart/redis`; các release khác dùng `chart/microservice`. Mỗi release có `wait: true`, timeout `10m`.
+
+Ba override trong `vars/microservices.yml` được truyền qua `values`, ưu tiên cao hơn values file upstream:
+
+| Override | Phạm vi | Mục đích theo PDF |
+| --- | --- | --- |
+| `appReplicas: 1` | Cấu hình chung các release | Giảm replica phù hợp worker của lab. |
+| `serviceType: NodePort` | Release `frontendservice` | Truy cập storefront qua IP node và NodePort. |
+| `appName: checkoutservice` | Release `checkoutservice` | Tránh Service/Deployment mang tên mặc định `servicename`. |
+
+Theo PDF, values upstream của checkout khai báo trùng khóa `appImage`, làm thiếu `appName`; frontend lại gọi `checkoutservice:5050`. Override tên giúp hai bên khớp nhau. Việc tái hiện lỗi để lấy bằng chứng chưa được thực hiện trong lần kiểm tra này.
+
+Playbook đọc Service `frontend` và in URL `http://20.2.248.1:<NODE_PORT>/`. Mở đúng cổng được trả về trên NSG/firewall worker cho máy demo; không giả định một NodePort cố định.
+
+**Minh chứng báo cáo:** PLAY RECAP triển khai, 11 release, effective values frontend/checkout, URL thực tế và ảnh storefront.
+
 ## Nguồn gốc
 
 Dựa trên ví dụ Kubernetes trong Ansible for DevOps của Jeff Geerling, điều chỉnh cho hai VM Azure có sẵn. Yêu cầu đối chiếu lấy từ [Project01_Ansible.pdf](Project01_Ansible.pdf).

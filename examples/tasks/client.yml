@@ -1,0 +1,20 @@
+---
+- name: Install venv support for the Python Kubernetes client
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install Kubernetes module dependencies in a dedicated virtual environment
+  ansible.builtin.pip:
+    name:
+      - 'kubernetes>=24.2.0,<36.0.0'
+      - PyYAML
+      - jsonpatch
+    virtualenv: /opt/kubernetes-client
+    virtualenv_command: /usr/bin/python3 -m venv
+
+- name: Use the Kubernetes client's Python interpreter for example tasks
+  ansible.builtin.set_fact:
+    ansible_python_interpreter: /opt/kubernetes-client/bin/python

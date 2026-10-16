@@ -1,0 +1,23 @@
+---
+- hosts: k8s_control_plane
+  become: yes
+
+  pre_tasks:
+    - name: Prepare Python Kubernetes client
+      ansible.builtin.import_tasks: tasks/client.yml
+
+  tasks:
+    - name: Remove resources in Nginx Deployment definition.
+      kubernetes.core.k8s:
+        kubeconfig: /etc/kubernetes/admin.conf
+        state: absent
+        definition: "{{ lookup('file', 'files/nginx.yml') | from_yaml }}"
+
+    - name: Remove the Nginx Service.
+      kubernetes.core.k8s:
+        kubeconfig: /etc/kubernetes/admin.conf
+        state: absent
+        api_version: v1
+        kind: Service
+        namespace: default
+        name: a4d-nginx

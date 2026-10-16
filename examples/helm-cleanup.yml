@@ -1,0 +1,21 @@
+---
+- hosts: k8s_control_plane
+  become: yes
+
+  pre_tasks:
+    - name: Prepare Python Kubernetes client
+      ansible.builtin.import_tasks: tasks/client.yml
+
+  tasks:
+    - name: Remove phpMyAdmin with Helm.
+      kubernetes.core.helm:
+        kubeconfig: /etc/kubernetes/admin.conf
+        name: phpmyadmin
+        chart_ref: bitnami/phpmyadmin
+        release_namespace: default
+        state: absent
+
+    - name: Delete helm binary.
+      file:
+        path: /usr/local/bin/helm
+        state: absent
