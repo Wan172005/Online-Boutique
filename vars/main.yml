@@ -71,6 +71,8 @@ helm_version: 'v3.21.4'
 helm_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts.architecture] }}"
 helm_download_path: "/var/cache/helm/{{ helm_version }}-{{ helm_arch }}"
 helm_archive_url: "https://get.helm.sh/helm-{{ helm_version }}-linux-{{ helm_arch }}.tar.gz"
+# Installed for root, matching the become user of the Helm deployment tasks.
+helm_diff_version: 'v3.15.11'
 
 # Access from the Ansible controller through an SSH tunnel (see README.md).
 # For VPN/private access or direct public API access, override this URL.

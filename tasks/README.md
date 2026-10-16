@@ -75,11 +75,13 @@ Task file không tự thực thi join. Task của role dùng guard `creates=/etc
 
 Role Kubernetes đã cấu hình kubeconfig của root. File này sao chép admin kubeconfig sang `<home-của-ansible_user>/.kube/config`, owner là SSH user, mode `0600`, với `no_log: true`. Nhờ đó `azureuser` sử dụng được quyền quản trị cluster trên master. Việc tải kubeconfig về máy Ansible nằm trong `verify.yml`.
 
-## helm.yml — Cài Helm 3 trên control plane
+## helm.yml — Cài Helm 3 và helm-diff trên control plane
 
 [helm.yml](helm.yml) xác nhận `helm_version` có dạng `v3.x.y` và kiến trúc VM là `x86_64` hoặc `aarch64`. File tải archive theo phiên bản/kiến trúc, kiểm tra SHA256 từ URL checksum, giải nén rồi chép binary vào `/usr/local/bin/helm` với mode `0755`.
 
-Bước cuối chạy `helm version --short` và assert phiên bản khớp `helm_version`. Có thể gọi riêng qua playbook cha:
+Sau khi chạy `helm version --short` và assert phiên bản khớp `helm_version`, file cài Git/curl cho installer, `python3-yaml` cho module `kubernetes.core.helm_plugin` và đọc `helm plugin list` của root. Plugin helm-diff được cài từ repository [databus23/helm-diff](https://github.com/databus23/helm-diff) theo `helm_diff_version` trong `vars/main.yml`; phiên bản khác được gỡ rồi cài lại, phiên bản đã khớp được giữ nguyên. Cuối cùng chạy `helm diff version` và assert đúng phiên bản đã ghim.
+
+Plugin được cài cho root để `kubernetes.core.helm` trong playbook triển khai với `become: true` dùng được khi kiểm tra thay đổi release. SSH user kiểm tra trực tiếp bằng `sudo /usr/local/bin/helm diff version`. Có thể gọi riêng qua playbook cha:
 
 ```bash
 ansible-playbook main.yml --tags helm --limit k8s_control_plane

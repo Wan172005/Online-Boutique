@@ -91,7 +91,7 @@
       ansible.builtin.import_tasks: tasks/kubeconfig.yml
       tags: [kubernetes]
 
-    - name: Install Helm 3 on the control plane
+    - name: Install Helm 3 and helm-diff on the control plane
       ansible.builtin.import_tasks: tasks/helm.yml
       tags: [helm]
 

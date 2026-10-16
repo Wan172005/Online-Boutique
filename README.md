@@ -28,7 +28,7 @@ SSH dùng `azureuser`, key `~/.ssh/OpenStack-VM_key.pem`. IP public dùng cho SS
 | [examples/README.md](examples/README.md) | Giải thích riêng `online-boutique.yml`. |
 | [templates/kube-flannel.yml.j2](templates/kube-flannel.yml.j2) | Render Flannel với Pod CIDR và interface theo IP node. |
 
-Phiên bản đang khai báo: Kubernetes `1.35.9`, Flannel `v0.28.9`, Helm `v3.21.4`. Đây là giá trị cấu hình trong mã nguồn, chưa xác nhận khả năng tải package/image trong lần kiểm tra này. Đổi biến phiên bản trên cluster đang chạy không thay thế quy trình nâng cấp.
+Phiên bản đang khai báo: Kubernetes `1.35.9`, Flannel `v0.28.9`, Helm `v3.21.4`, helm-diff `v3.15.11`. Đây là giá trị cấu hình trong mã nguồn, chưa xác nhận khả năng tải package/image trong lần kiểm tra này. Đổi biến phiên bản trên cluster đang chạy không thay thế quy trình nâng cấp.
 
 ## Tình trạng 5 Part
 
@@ -83,7 +83,7 @@ Luồng thực hiện:
 1. Kiểm tra inventory, Ubuntu 24.04, RAM/CPU, IP/CIDR; tắt swap hiện tại, trong fstab và Azure Linux Agent.
 2. Role swap xử lý swapfile; role Docker chỉ cài `containerd.io`. Task bổ sung bật overlay, IPv4 forwarding, CRI và systemd cgroups.
 3. Trên master, chuẩn bị bootstrap kubelet, render Flannel và ghi IP private cho kubelet. Role Kubernetes cài package, chạy `kubeadm init` và áp dụng CNI.
-4. Hold package, cài kubeconfig cho SSH user và cài Helm 3 bằng task riêng. Project không dùng hai role `geerlingguy.containerd`/`geerlingguy.helm` nêu trong PDF; chức năng tương ứng được thực hiện bằng cách trên.
+4. Hold package, cài kubeconfig cho SSH user, cài Helm 3 và plugin helm-diff cho root bằng task riêng. Plugin giúp `kubernetes.core.helm` phát hiện thay đổi khi chạy lại deployment. Project không dùng hai role `geerlingguy.containerd`/`geerlingguy.helm` nêu trong PDF; chức năng tương ứng được thực hiện bằng cách trên.
 5. Worker nhận join command từ role trên master, đợi API private và join với tên node theo inventory.
 6. Đợi từng node Ready, rollout Flannel/CoreDNS, toàn bộ Pod `kube-system` Ready và lấy kubeconfig về `artifacts/admin.conf`.
 
@@ -100,6 +100,15 @@ helm version --short
 ```
 
 Kubeconfig xuất về `artifacts/admin.conf` trỏ `https://127.0.0.1:6443` mặc định; truy cập từ máy local cần SSH tunnel. Các bước kiểm tra thủ công trong tài liệu dùng trực tiếp VM master.
+
+Để bổ sung/cập nhật helm-diff trên cluster đã có, chạy từ máy điều khiển:
+
+```bash
+ansible-playbook main.yml --tags helm --limit k8s_control_plane
+ansible k8s_control_plane -b -m ansible.builtin.command -a '/usr/local/bin/helm diff version'
+```
+
+Phiên bản plugin được ghim bằng `helm_diff_version` trong `vars/main.yml`. Task thay plugin nếu phiên bản khác và bỏ qua cài đặt khi đã đúng phiên bản. Plugin được cài cho root, cùng user chạy deployment với `become: true`; khi kiểm tra trực tiếp trên master dùng `sudo /usr/local/bin/helm diff version`.
 
 **Minh chứng báo cáo:** PLAY RECAP, hai node Ready với INTERNAL-IP đúng, tất cả Pod `kube-system` Ready và phiên bản Helm.
 
