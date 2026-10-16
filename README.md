@@ -49,7 +49,7 @@ Ngoài 5 Part, **rubric trang 6–7 còn yêu cầu** các nội dung chưa th�
 - Ingress controller cài qua Ansible, định tuyến hostname, frontend trở về ClusterIP và mở rộng verification.
 - Chart mở rộng được lưu trong project, limits dựa trên đo đạc, probes cho ít nhất bốn service và minh chứng restart.
 - Scaling bằng Ansible, thực hiện drain và giải thích PodDisruptionBudget.
-- Bằng chứng idempotency: `changed=0` ở lần chạy thứ hai, hai log chạy lại theo yêu cầu nộp bài và giải thích task chưa idempotent nếu có. Role Kubernetes đặt mode kubeconfig/root directory rồi task bổ sung đặt lại mode chặt hơn; đây là điểm cần kiểm tra bằng PLAY RECAP. Role cũng tạo join token mới dù task khai báo `changed_when: false`, nên không chỉ dựa vào recap để giải thích hành vi.
+- Bằng chứng idempotency trên VM: `changed=0` ở lần chạy thứ hai, hai log chạy lại theo yêu cầu nộp bài và giải thích task chưa idempotent nếu có. Mã nguồn đã tránh đổi quyền kubeconfig qua lại, ghi đè kubeconfig local và tạo join token khi worker đã join; bộ regression local không thay thế log chạy trên VM.
 - Bộ nộp bài: repository có `.git`, `report.pdf`, thư mục `screenshots/` và `recap.txt` từ lần dựng sạch cùng hai lần kiểm tra idempotency.
 
 Part 2 và Part 4 đã được bổ sung trong mã nguồn. Các nội dung rubric và bằng chứng thực tế nêu trên vẫn cần hoàn thiện.
@@ -82,9 +82,9 @@ Luồng thực hiện:
 
 1. Kiểm tra inventory, Ubuntu 24.04, RAM/CPU, IP/CIDR; tắt swap hiện tại, trong fstab và Azure Linux Agent.
 2. Role swap xử lý swapfile; role Docker chỉ cài `containerd.io`. Task bổ sung bật overlay, IPv4 forwarding, CRI và systemd cgroups.
-3. Trên master, chuẩn bị bootstrap kubelet, render Flannel và ghi IP private cho kubelet. Role Kubernetes cài package, chạy `kubeadm init` và áp dụng CNI.
+3. Trên master, chuẩn bị bootstrap kubelet, render Flannel và ghi IP private cho kubelet. Tái sử dụng task repository/sysctl của role Kubernetes; task trong project cài package, chỉ chạy `kubeadm init` khi thiếu admin kubeconfig và áp dụng CNI với báo cáo thay đổi thực tế.
 4. Hold package, cài kubeconfig cho SSH user, cài Helm 3 và plugin helm-diff cho root bằng task riêng. Plugin giúp `kubernetes.core.helm` phát hiện thay đổi khi chạy lại deployment. Project không dùng hai role `geerlingguy.containerd`/`geerlingguy.helm` nêu trong PDF; chức năng tương ứng được thực hiện bằng cách trên.
-5. Worker nhận join command từ role trên master, đợi API private và join với tên node theo inventory.
+5. Chỉ worker thiếu `/etc/kubernetes/kubelet.conf` mới đợi API private, yêu cầu master tạo join token và join với tên node theo inventory. Token được che trong log và không được tạo lại khi worker đã join.
 6. Đợi từng node Ready, rollout Flannel/CoreDNS, toàn bộ Pod `kube-system` Ready và lấy kubeconfig về `artifacts/admin.conf`.
 
 Flannel dùng `--iface=$(NODE_IP)`, với `NODE_IP` từ `status.hostIP`; kubelet đăng ký IP private qua `/etc/default/kubelet`. Cách này chọn interface theo địa chỉ node thực tế thay cho hard-code `enp0s8` trong Vagrant.
@@ -206,6 +206,16 @@ Trong PDF, `vagrant halt` dừng VM và giữ đĩa; `vagrant destroy -f` xóa V
 ## Chuẩn bị báo cáo và nộp bài
 
 PDF yêu cầu mỗi Part một mục báo cáo; bộ nộp gồm repository có lịch sử Git, `report.pdf`, `screenshots/`, `recap.txt`. Cần ghi lại lần dựng thành công từ VM sạch và hai lần chạy lại kiểm tra idempotency. Chạy lại các playbook dựng cluster và triển khai ứng dụng theo phạm vi báo cáo; chưa có kết quả `changed=0` trong lần rà soát này.
+
+Kiểm tra regression local cho các task đã sửa, không tác động VM:
+
+```bash
+/usr/bin/python3 -m unittest discover -s tests -v
+```
+
+Bộ kiểm tra dùng file tạm, các module Ansible thật, binary Kubernetes/Helm giả lập và HTTP server localhost. Các ca kiểm tra gồm chạy lại kubeadm/worker join, sửa drift Flannel, quyền kubeconfig, export kubeconfig, verify ứng dụng chỉ đọc và teardown lần hai. Cần cài role/collection trong `requirements.yml` trước. `playbooks/verify.yml` giữ nguyên các thao tác chỉ đọc; `playbooks/teardown.yml` chỉ cần `python3-yaml`, không tạo venv hay cài Kubernetes Python client.
+
+Với cluster ổn định, cùng inventory và biến cấu hình, chạy `main.yml` lần hai phải giữ nguyên cấu hình đã quản lý. PLAY RECAP vẫn có thể báo thay đổi hợp lệ khi APT cache hết hạn (`cache_valid_time: 3600`), phát hiện drift hoặc có cấu hình mới. Các lệnh chỉ đọc không tính là thay đổi; việc tạo token hoặc Flannel trả về `configured` phải được báo `changed`.
 
 Không đưa SSH private key, kubeconfig hoặc join token vào bài nộp. `artifacts/admin.conf` là credential quản trị; `artifacts/` đã được ignore nhưng vẫn cần loại khỏi archive nếu nén trực tiếp cả folder. Rubric về Ingress, probes/limits, scaling và chẩn đoán cần hoàn thiện bên cạnh 5 Part cơ bản.
 

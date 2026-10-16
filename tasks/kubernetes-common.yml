@@ -1,0 +1,27 @@
+---
+# Reuse the pinned role's repository and sysctl tasks, but keep cluster bootstrap
+# in this project: upstream main.yml always creates a token and resets file modes.
+- name: Configure the Kubernetes APT repository using the pinned role
+  ansible.builtin.import_role:
+    name: geerlingguy.kubernetes
+    tasks_from: setup-Debian
+    vars_from: Debian
+
+- name: Install the pinned Kubernetes packages
+  ansible.builtin.apt:
+    name: "{{ item.name | default(item) }}"
+    state: "{{ item.state | default('present') }}"
+  loop: "{{ kubernetes_packages }}"
+  notify: Restart kubelet
+
+- name: Configure bridged traffic using the pinned role
+  ansible.builtin.import_role:
+    name: geerlingguy.kubernetes
+    tasks_from: sysctl-setup
+    vars_from: Debian
+
+- name: Enable and start kubelet
+  ansible.builtin.systemd_service:
+    name: kubelet
+    state: started
+    enabled: true

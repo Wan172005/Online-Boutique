@@ -24,17 +24,17 @@ Playbook chạy trên nhóm `k8s_control_plane` với quyền sudo (`become: tru
 | Thành phần | Cách thực hiện |
 | --- | --- |
 | Cấu hình dùng chung | Nạp `../vars/microservices.yml`: namespace `microservice`, danh sách 11 release, Helm binary, kubeconfig và timeout. |
-| Chuẩn bị dependency | Import `../examples/tasks/client.yml`, cài hỗ trợ venv, thư viện Python Kubernetes/PyYAML/jsonpatch trong `/opt/kubernetes-client` và chọn Python interpreter của venv. |
+| Chuẩn bị dependency | Bảo đảm package hệ thống `python3-yaml` có sẵn cho các module Helm; không tạo venv hay cài Kubernetes Python client. |
 | Gỡ ứng dụng | Import `../tasks/boutique-teardown.yml`, dùng Helm module gỡ release theo thứ tự ngược với triển khai, Redis cuối cùng. |
 | Xác nhận sau gỡ | Tra các release ở mọi trạng thái, assert không còn release, gọi `kubectl get nodes -o wide` và in kết quả. |
 
-Teardown dùng `state: absent`, `purge: true`, `wait: true`; thời gian đợi uninstall lấy từ `boutique_timeout` qua `wait_timeout`. Release chưa tồn tại được module xử lý theo trạng thái absent, nên có thể gọi lại khi ứng dụng đã gỡ hoặc triển khai dở.
+Teardown dùng `state: absent`, `purge: true`, `wait: true`; thời gian đợi uninstall lấy từ `boutique_timeout` qua `wait_timeout`. Release chưa tồn tại được module xử lý theo trạng thái absent, nên có thể gọi lại khi ứng dụng đã gỡ hoặc triển khai dở. Sau khi dependency đã có và các release đã gỡ, lần chạy tiếp theo không gọi uninstall và dự kiến `changed=0`.
 
 Namespace `microservice`, ứng dụng khác, Helm, containerd, Kubernetes, kubeconfig và VM được giữ lại. Playbook không sao lưu dữ liệu ứng dụng và không dừng/xóa VM. Việc gọi `get nodes` xác nhận API truy cập được, chưa assert tất cả node Ready.
 
 ## Điều kiện chạy
 
-Máy Ansible cần collection trong `requirements.yml`; master cần truy cập SSH/sudo, Helm và admin kubeconfig. Kubernetes API phải còn hoạt động để Helm xóa tài nguyên. Lần chuẩn bị Python client có thể cần truy cập Ubuntu package mirrors/PyPI; teardown không cần clone lại chart ứng dụng.
+Máy Ansible cần collection trong `requirements.yml`; master cần truy cập SSH/sudo, Helm, admin kubeconfig và Python hệ thống. Kubernetes API phải còn hoạt động để Helm xóa tài nguyên. Nếu `python3-yaml` chưa có, bước cài đặt cần Ubuntu package mirrors và APT metadata sẵn có; `main.yml` đã cài dependency này khi chuẩn bị helm-diff. Teardown không cần PyPI hay clone lại chart ứng dụng.
 
 Chạy từ thư mục gốc project, dùng `inventory.ini` qua `ansible.cfg`:
 
@@ -45,6 +45,8 @@ ansible-playbook playbooks/teardown.yml
 ```
 
 `--syntax-check` chỉ kiểm tra cú pháp; `--check` dự kiến thay đổi và bỏ qua block xác nhận sau gỡ. Hai chế độ này không thay thế lần chạy teardown thực tế.
+
+Bộ regression `/usr/bin/python3 -m unittest discover -s tests -v` chạy các task verify/teardown với binary giả lập, HTTP localhost và file tạm. Bộ kiểm tra xác nhận verify không báo thay đổi, teardown xử lý cả release pending và lần hai không uninstall lại; check mode của teardown không xóa release. Không chạy teardown lên ứng dụng thật khi thực hiện các test này.
 
 Để triển khai lại ứng dụng:
 

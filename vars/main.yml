@@ -32,8 +32,6 @@ kubernetes_control_plane_host: "{{ groups['k8s_control_plane'][0] }}"
 kubernetes_control_plane_ip: "{{ hostvars[kubernetes_control_plane_host].kubernetes_node_ip }}"
 kubernetes_allow_pods_on_control_plane: false
 kubernetes_join_command_extra_opts: "--cri-socket {{ kubernetes_cri_socket }}"
-# Hide the role's 'all' default so it selects init without an ignore-errors flag.
-kubernetes_ignore_preflight_errors: "{{ undef() }}"
 kubernetes_config_kubeadm_apiversion: v1beta4
 kubernetes_config_init_configuration:
   localAPIEndpoint:
@@ -59,7 +57,7 @@ kubernetes_config_kubelet_configuration:
 kubernetes_pod_network:
   cni: flannel
   cidr: "{{ kubernetes_pod_network_cidr }}"
-# Prepare this manifest before the role runs; the role applies it after kubeadm init.
+# Prepare this manifest before cluster initialization; apply it after kubeadm init.
 kubernetes_flannel_manifest_file: /etc/kubernetes/kube-flannel.yml
 
 # Pin a Flannel release; the downloaded manifest is rendered with the Pod CIDR.

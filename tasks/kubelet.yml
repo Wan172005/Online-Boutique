@@ -1,5 +1,5 @@
 ---
-# Write this before the role starts kubelet, including on worker nodes.
+# Write this before Kubernetes setup starts kubelet, including on worker nodes.
 - name: Configure kubelet to register the private node IP
   ansible.builtin.copy:
     dest: /etc/default/kubelet

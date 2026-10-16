@@ -8,8 +8,10 @@
     - ../vars/microservices.yml
 
   pre_tasks:
-    - name: Prepare Python dependencies for the Helm module
-      ansible.builtin.import_tasks: ../examples/tasks/client.yml
+    - name: Ensure the Helm modules have their system Python dependency
+      ansible.builtin.apt:
+        name: python3-yaml
+        state: present
 
   tasks:
     - name: Remove the application and verify the remaining cluster

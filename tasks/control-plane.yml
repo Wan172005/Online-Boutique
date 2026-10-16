@@ -1,5 +1,5 @@
 ---
-- name: Create the directory for the role's local Flannel manifest
+- name: Create the directory for the local Flannel manifest
   ansible.builtin.file:
     path: /etc/kubernetes
     state: directory

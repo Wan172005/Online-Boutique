@@ -1,0 +1,55 @@
+---
+- name: Check whether the control plane is already initialized
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: kubernetes_init_stat
+
+- name: Render the kubeadm and kubelet configuration
+  ansible.builtin.template:
+    src: kubeadm-config.yml.j2
+    dest: "{{ kubernetes_kubeadm_kubelet_config_file_path }}"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Initialize the control plane only when its admin kubeconfig is absent
+  ansible.builtin.command:
+    argv: >-
+      {{ ['kubeadm', 'init', '--config', kubernetes_kubeadm_kubelet_config_file_path]
+         + kubernetes_kubeadm_init_extra_opts.split() }}
+    creates: /etc/kubernetes/admin.conf
+  when: not kubernetes_init_stat.stat.exists
+
+- name: Restrict the control plane admin kubeconfig before using it
+  ansible.builtin.file:
+    path: /etc/kubernetes/admin.conf
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Apply the configured Flannel manifest
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig=/etc/kubernetes/admin.conf
+      - apply
+      - -f
+      - "{{ kubernetes_flannel_manifest_file }}"
+  register: flannel_result
+  changed_when: flannel_result.stdout is search('(?m)\s(created|configured)$')
+  until: flannel_result is not failed
+  retries: 12
+  delay: 5
+
+- name: Allow workloads on a newly initialized control plane when configured
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig=/etc/kubernetes/admin.conf
+      - taint
+      - nodes
+      - "{{ inventory_hostname }}"
+      - node-role.kubernetes.io/control-plane-
+  when:
+    - kubernetes_allow_pods_on_control_plane | bool
+    - not kubernetes_init_stat.stat.exists

@@ -9,11 +9,11 @@ Cấu hình cluster lấy từ [../vars/main.yml](../vars/main.yml); cấu hình
 | Giai đoạn | Host | Task file theo thứ tự |
 | --- | --- | --- |
 | Chuẩn bị VM | `k8s` | `preflight.yml` → `prepare.yml` → role swap/Docker → `containerd.yml`. |
-| Khởi tạo cluster | `k8s_control_plane` | `control-plane-bootstrap.yml` → `control-plane.yml` → `kubelet.yml` → role Kubernetes → `packages.yml` → `kubeconfig.yml` → `helm.yml`. |
-| Join worker | `k8s_workers` | `kubelet.yml` → `workers.yml` → role Kubernetes → `packages.yml`. |
+| Khởi tạo cluster | `k8s_control_plane` | `control-plane-bootstrap.yml` → `control-plane.yml` → `kubelet.yml` → `kubernetes-common.yml` → `kubernetes-init.yml` → `packages.yml` → `kubeconfig.yml` → `helm.yml`. |
+| Join worker | `k8s_workers` | `kubelet.yml` → `kubernetes-common.yml` → `workers.yml` → `packages.yml`. |
 | Xác nhận cluster | `k8s_control_plane` | `verify.yml`. |
 | Xác nhận ứng dụng | `k8s_control_plane` | `playbooks/verify.yml` lấy IP của cả hai VM rồi gọi `boutique-verify.yml`. |
-| Gỡ ứng dụng | `k8s_control_plane` | Playbook teardown chuẩn bị Python client rồi gọi `boutique-teardown.yml`. |
+| Gỡ ứng dụng | `k8s_control_plane` | Playbook teardown bảo đảm có `python3-yaml` rồi gọi `boutique-teardown.yml`. |
 
 `main.yml` còn có task xóa điều kiện bootstrap kubelet tạm thời sau khi role control plane hoàn tất; thao tác đó nằm trực tiếp trong playbook.
 
@@ -33,7 +33,7 @@ File cài `ca-certificates`, `python3-debian`, `iproute2`, `iptables`, `conntrac
 
 ## containerd.yml — Cấu hình container runtime
 
-[containerd.yml](containerd.yml) lưu module `overlay` vào `/etc/modules-load.d/kubernetes.conf`, nạp nếu chưa có, ghi `net.ipv4.ip_forward = 1` vào `/etc/sysctl.d/99-kubernetes.conf` và áp dụng sysctl.
+[containerd.yml](containerd.yml) lưu module `overlay` vào `/etc/modules-load.d/kubernetes.conf`, nạp nếu chưa có. Module `ansible.posix.sysctl` quản lý `net.ipv4.ip_forward = 1` trong `/etc/sysctl.d/99-kubernetes.conf` và giá trị runtime, chỉ báo thay đổi khi cần sửa.
 
 Sau khi role Docker cài `containerd.io`, file lấy cấu hình từ `containerd config default`, đổi `SystemdCgroup = false` thành `true`, ghi `/etc/containerd/config.toml` và gọi handler `Restart containerd` khi nội dung thay đổi. Cấu hình mặc định này được dùng để bật CRI. Cuối cùng, dịch vụ containerd được bật và chạy. Cấu hình bridged traffic do role Kubernetes đảm nhiệm.
 
@@ -41,17 +41,23 @@ Sau khi role Docker cài `containerd.io`, file lấy cấu hình từ `container
 
 [control-plane-bootstrap.yml](control-plane-bootstrap.yml) kiểm tra `/etc/kubernetes/admin.conf`. Nếu chưa có, file tạo systemd drop-in cho kubelet với `ConditionPathExists=/etc/kubernetes/admin.conf`, reload systemd khi cần và dừng kubelet đã cài.
 
-Sau đó, `ss` kiểm tra không còn listener TCP 10250; assertion dừng play nếu cổng vẫn bị chiếm. Điều kiện tạm ngăn role bật kubelet quá sớm khi chạy lại một lần init chưa hoàn tất. Khi kubeadm ghi admin kubeconfig trong bootstrap, điều kiện cho phép kubelet chạy. `main.yml` gỡ drop-in sau khi role hoàn tất. File này chỉ áp dụng trên control plane.
+Sau đó, `ss` kiểm tra không còn listener TCP 10250; assertion dừng play nếu cổng vẫn bị chiếm. Điều kiện tạm ngăn kubelet bật quá sớm khi chạy lại một lần init chưa hoàn tất. Khi kubeadm ghi admin kubeconfig trong bootstrap, điều kiện cho phép kubelet chạy. `main.yml` gỡ drop-in sau khi khởi tạo hoàn tất. File này chỉ áp dụng trên control plane.
 
 ## control-plane.yml — Chuẩn bị manifest Flannel
 
 [control-plane.yml](control-plane.yml) tạo `/etc/kubernetes`, tải manifest theo `kubernetes_flannel_manifest_url` vào `kube-flannel-upstream.yml`, đọc nội dung rồi render [../templates/kube-flannel.yml.j2](../templates/kube-flannel.yml.j2) ra `/etc/kubernetes/kube-flannel.yml`.
 
-Template thay Pod CIDR và thêm `NODE_IP` từ `status.hostIP` cùng `--iface=$(NODE_IP)` cho Flannel. Task file này **không chạy kubeadm init và không apply Flannel**; role `geerlingguy.kubernetes` thực hiện hai thao tác đó sau khi manifest đã sẵn sàng.
+Template thay Pod CIDR và thêm `NODE_IP` từ `status.hostIP` cùng `--iface=$(NODE_IP)` cho Flannel. Task file này **không chạy kubeadm init và không apply Flannel**; `kubernetes-init.yml` thực hiện hai thao tác đó sau khi manifest đã sẵn sàng.
+
+## kubernetes-common.yml và kubernetes-init.yml — Cài đặt và khởi tạo ổn định khi chạy lại
+
+[kubernetes-common.yml](kubernetes-common.yml) import riêng `setup-Debian` và `sysctl-setup` của role `geerlingguy.kubernetes`, nạp biến Debian và giữ nguyên defaults của role. File cài các package đã ghim, bật kubelet và chỉ thông báo handler restart khi package thay đổi. Không gọi entry point `main` của role vì entry point đó luôn tạo token và đặt lại quyền kubeconfig.
+
+[kubernetes-init.yml](kubernetes-init.yml) render [../templates/kubeadm-config.yml.j2](../templates/kubeadm-config.yml.j2) với mode `0600`; chỉ chạy `kubeadm init` khi chưa có `/etc/kubernetes/admin.conf`, thêm guard `creates` và bảo vệ admin kubeconfig bằng mode `0600`. File áp dụng Flannel với kubeconfig tường minh; cả `created` lẫn `configured` đều được tính là thay đổi, `unchanged` không tính. Không tạo join token trong giai đoạn control plane.
 
 ## kubelet.yml — Ghim địa chỉ IP node
 
-[kubelet.yml](kubelet.yml) ghi `KUBELET_EXTRA_ARGS=--node-ip={{ kubernetes_node_ip }}` vào `/etc/default/kubelet`, trước khi role bật kubelet trên master hoặc worker.
+[kubelet.yml](kubelet.yml) ghi `KUBELET_EXTRA_ARGS=--node-ip={{ kubernetes_node_ip }}` vào `/etc/default/kubelet`, trước khi bật kubelet trên master hoặc worker.
 
 Kết quả được lưu vào `kubernetes_kubelet_address`; `packages.yml` dựa vào trạng thái thay đổi này để restart kubelet. Mục đích là để node đăng ký địa chỉ mạng cluster đã chọn thay vì một địa chỉ trên NIC khác.
 
@@ -59,21 +65,21 @@ Kết quả được lưu vào `kubernetes_kubelet_address`; `packages.yml` dự
 
 [packages.yml](packages.yml) đặt trạng thái `hold` cho `kubelet`, `kubeadm`, `kubectl` bằng `dpkg_selections`, tránh tự nâng phiên bản qua APT. Nếu `kubelet.yml` vừa đổi cấu hình IP, file reload systemd và restart kubelet.
 
-Package và repository được role Kubernetes cài trước đó; task file này không tự cài package Kubernetes.
+Package được `kubernetes-common.yml` cài trước đó; task file này không tự cài package Kubernetes.
 
 ## workers.yml — Chuẩn bị join command cho worker
 
-[workers.yml](workers.yml) kiểm tra `/etc/kubernetes/kubelet.conf`. Nếu worker chưa join, file đợi master private IP mở TCP 6443 và assert role control plane đã cung cấp join command.
+[workers.yml](workers.yml) kiểm tra `/etc/kubernetes/kubelet.conf`. Chỉ khi worker chưa join, file đợi master private IP mở TCP 6443 rồi delegate lệnh `kubeadm token create --print-join-command` về master. Lệnh tạo token được báo thay đổi và che bằng `no_log: true`.
 
-Join command được chuẩn hóa whitespace thành một dòng, thêm `--node-name` theo alias inventory và đặt `systemctl stop kubelet &&` ở đầu. Role Kubernetes chạy command này sau bước bật dịch vụ kubelet, giúp giải phóng cổng 10250 ngay trước join. Fact chứa command được che bằng `no_log: true` ở task chuẩn bị.
+File dừng kubelet để giải phóng cổng 10250 ngay trước join, sau đó gọi command bằng `argv`, thêm CRI socket và `--node-name` theo alias inventory. Join command được che bằng `no_log: true`; `kubeadm join` khởi động lại kubelet trong bootstrap.
 
-Task file không tự thực thi join. Task của role dùng guard `creates=/etc/kubernetes/kubelet.conf` để bỏ qua command khi worker đã join. Cần chạy toàn bộ `main.yml` để có facts và join command từ master.
+Guard `creates=/etc/kubernetes/kubelet.conf` bảo vệ thêm cho lệnh join. Khi worker đã join, cả đợi API, tạo token, dừng kubelet và join đều bỏ qua. Cần chạy toàn bộ `main.yml` để có facts và master sẵn sàng.
 
 ## kubeconfig.yml — Cấp kubeconfig cho SSH user
 
 [kubeconfig.yml](kubeconfig.yml) đặt `/etc/kubernetes/admin.conf` thành `root:root`, mode `0600`; tra home của `ansible_user` qua `getent`; đặt thư mục `.kube` của root và SSH user thành `0700`.
 
-Role Kubernetes đã cấu hình kubeconfig của root. File này sao chép admin kubeconfig sang `<home-của-ansible_user>/.kube/config`, owner là SSH user, mode `0600`, với `no_log: true`. Nhờ đó `azureuser` sử dụng được quyền quản trị cluster trên master. Việc tải kubeconfig về máy Ansible nằm trong `verify.yml`.
+File tạo symlink `/root/.kube/config` tới admin kubeconfig, rồi sao chép admin kubeconfig sang `<home-của-ansible_user>/.kube/config`, owner là SSH user, mode `0600`, với `no_log: true`. Bỏ qua bản sao nếu SSH user là root. Chỉ các task này quản lý quyền nên không còn đổi qua lại giữa `0755`/`0700` và `0644`/`0600`. Việc tải kubeconfig về máy Ansible nằm trong `verify.yml`.
 
 ## helm.yml — Cài Helm 3 và helm-diff trên control plane
 
@@ -91,7 +97,7 @@ ansible-playbook main.yml --tags helm --limit k8s_control_plane
 
 [verify.yml](verify.yml) đợi từng node trong inventory đăng ký và có condition Ready, đợi rollout DaemonSet Flannel trong `kube-flannel`, Deployment CoreDNS và tất cả Pod trong `kube-system` có condition Ready. Các lệnh đợi dùng `kubernetes_ready_timeout` (mặc định `300s`).
 
-File tạo thư mục kubeconfig local với mode `0700`, fetch `/etc/kubernetes/admin.conf`, thay server endpoint theo `kubernetes_kubeconfig_server` và đặt file thành `0600`. Mặc định lưu tại `artifacts/admin.conf`, trỏ `https://127.0.0.1:6443`; khi truy cập từ local cần SSH tunnel. Cuối cùng in node/private IP và vị trí kubeconfig.
+File tạo thư mục kubeconfig local với mode `0700`, đọc `/etc/kubernetes/admin.conf` bằng `slurp`, thay server endpoint trong bộ nhớ rồi `copy` nội dung cuối cùng vào file local với mode `0600`. Credential được che bằng `no_log: true`. Chạy lại cùng nội dung không ghi đè bản gốc rồi sửa file như luồng fetch trước đây. Mặc định lưu tại `artifacts/admin.conf`, trỏ `https://127.0.0.1:6443`; khi truy cập từ local cần SSH tunnel. Cuối cùng in node/private IP và vị trí kubeconfig.
 
 Đây là kiểm tra **cluster** ở Part 2. Việc kiểm tra ứng dụng Part 4 nằm trong `boutique-verify.yml`, được playbook riêng gọi.
 

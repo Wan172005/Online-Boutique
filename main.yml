@@ -56,7 +56,7 @@
       ansible.builtin.import_tasks: tasks/control-plane-bootstrap.yml
       tags: [kubernetes]
 
-    - name: Prepare the Flannel manifest for the Kubernetes role
+    - name: Prepare the Flannel manifest for cluster initialization
       ansible.builtin.import_tasks: tasks/control-plane.yml
       tags: [kubernetes]
 
@@ -64,9 +64,13 @@
       ansible.builtin.import_tasks: tasks/kubelet.yml
       tags: [kubernetes]
 
-  roles:
-    - role: geerlingguy.kubernetes
-      kubernetes_role: control_plane
+  tasks:
+    - name: Install and configure Kubernetes without repeated bootstrap side effects
+      ansible.builtin.import_tasks: tasks/kubernetes-common.yml
+      tags: [kubernetes]
+
+    - name: Initialize the control plane and reconcile Flannel
+      ansible.builtin.import_tasks: tasks/kubernetes-init.yml
       tags: [kubernetes]
 
   post_tasks:
@@ -83,7 +87,7 @@
       when: kubernetes_kubelet_bootstrap_cleanup.changed
       tags: [kubernetes]
 
-    - name: Hold the Kubernetes package versions installed by the role
+    - name: Hold the installed Kubernetes package versions
       ansible.builtin.import_tasks: tasks/packages.yml
       tags: [kubernetes]
 
@@ -94,6 +98,12 @@
     - name: Install Helm 3 and helm-diff on the control plane
       ansible.builtin.import_tasks: tasks/helm.yml
       tags: [helm]
+
+  handlers:
+    - name: Restart kubelet
+      ansible.builtin.systemd_service:
+        name: kubelet
+        state: restarted
 
 - name: Join workers to the cluster
   hosts: k8s_workers
@@ -106,19 +116,25 @@
       ansible.builtin.import_tasks: tasks/kubelet.yml
       tags: [kubernetes]
 
-    - name: Prepare the worker to join using the role's join command
+  tasks:
+    - name: Install and configure Kubernetes on the worker
+      ansible.builtin.import_tasks: tasks/kubernetes-common.yml
+      tags: [kubernetes]
+
+    - name: Join only workers that have not joined yet
       ansible.builtin.import_tasks: tasks/workers.yml
       tags: [kubernetes]
 
-  roles:
-    - role: geerlingguy.kubernetes
-      kubernetes_role: node
-      tags: [kubernetes]
-
   post_tasks:
-    - name: Hold the Kubernetes package versions installed by the role
+    - name: Hold the installed Kubernetes package versions
       ansible.builtin.import_tasks: tasks/packages.yml
       tags: [kubernetes]
+
+  handlers:
+    - name: Restart kubelet
+      ansible.builtin.systemd_service:
+        name: kubelet
+        state: restarted
 
 - name: Verify the cluster and export kubeconfig
   hosts: k8s_control_plane

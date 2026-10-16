@@ -1,5 +1,5 @@
 ---
-# The role starts kubelet before kubeadm init. On a retry, an already configured
+# Kubernetes setup starts kubelet before kubeadm init. On a retry, an already configured
 # kubelet can occupy port 10250. Gate only control-plane kubelet startup until
 # kubeadm writes admin.conf, before its kubelet-start phase. Do not apply this
 # condition to workers, whose bootstrap sequence differs.
@@ -38,7 +38,7 @@
     - name: Discover whether kubelet is already installed
       ansible.builtin.service_facts:
 
-    - name: Stop an existing kubelet before the role runs kubeadm init
+    - name: Stop an existing kubelet before running kubeadm init
       ansible.builtin.systemd_service:
         name: kubelet
         state: stopped

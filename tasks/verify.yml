@@ -59,18 +59,18 @@
   delegate_to: localhost
   become: false
 
-- name: Export admin kubeconfig to the Ansible controller
-  ansible.builtin.fetch:
+- name: Read the admin kubeconfig for local export
+  ansible.builtin.slurp:
     src: /etc/kubernetes/admin.conf
-    dest: "{{ kubernetes_kubeconfig_local_path }}"
-    flat: true
+  register: kubernetes_admin_kubeconfig
   no_log: true
 
-- name: Set the local kubeconfig API endpoint
-  ansible.builtin.lineinfile:
-    path: "{{ kubernetes_kubeconfig_local_path }}"
-    regexp: '^\s+server:'
-    line: '    server: {{ kubernetes_kubeconfig_server }}'
+- name: Export kubeconfig with the final local endpoint in a single write
+  ansible.builtin.copy:
+    content: >-
+      {{ kubernetes_admin_kubeconfig.content | b64decode
+         | regex_replace('(?m)^(\s+server:)[^\n]*', '\1 ' ~ kubernetes_kubeconfig_server) }}
+    dest: "{{ kubernetes_kubeconfig_local_path }}"
     mode: '0600'
   delegate_to: localhost
   become: false
