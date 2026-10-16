@@ -1,0 +1,14 @@
+{% for manifest in flannel_upstream.content | b64decode | from_yaml_all | list %}
+---
+{% if manifest.kind == 'ConfigMap' and manifest.metadata.name == 'kube-flannel-cfg' %}
+{% set network = manifest.data['net-conf.json'] | from_json | combine({'Network': kubernetes_pod_network_cidr}) %}
+{{ manifest | combine({'data': {'net-conf.json': network | to_nice_json}}, recursive=true) | to_nice_yaml(indent=2) }}
+{% elif manifest.kind == 'DaemonSet' and manifest.metadata.name == 'kube-flannel-ds' %}
+{% set container = manifest.spec.template.spec.containers[0] %}
+{% set node_ip_env = {'name': 'NODE_IP', 'valueFrom': {'fieldRef': {'fieldPath': 'status.hostIP'}}} %}
+{% set patched_container = container | combine({'args': container.args + ['--iface=$(NODE_IP)'], 'env': container.env + [node_ip_env]}) %}
+{{ manifest | combine({'spec': {'template': {'spec': {'containers': [patched_container]}}}}, recursive=true) | to_nice_yaml(indent=2) }}
+{% else %}
+{{ manifest | to_nice_yaml(indent=2) }}
+{% endif %}
+{% endfor %}

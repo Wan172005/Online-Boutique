@@ -1,0 +1,80 @@
+---
+# The Kubernetes role uses a minor version for its repository and APT preferences.
+# Pin the exact package and control-plane image versions separately.
+# Changing these values is NOT a cluster upgrade procedure.
+kubernetes_version_kubeadm: '1.35.9'
+kubernetes_version: "{{ kubernetes_version_kubeadm.split('.')[:2] | join('.') }}"
+kubernetes_minor_version: "{{ kubernetes_version }}"
+kubernetes_package_version: "{{ kubernetes_version_kubeadm }}-1.1"
+kubernetes_apt_repository: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_minor_version }}/deb/"
+kubernetes_packages:
+  - name: "kubelet={{ kubernetes_package_version }}"
+    state: present
+  - name: "kubeadm={{ kubernetes_package_version }}"
+    state: present
+  - name: "kubectl={{ kubernetes_package_version }}"
+    state: present
+
+# Reuse the Docker role as a containerd installer, without Docker Engine/Compose.
+docker_packages: [containerd.io]
+docker_service_manage: false
+docker_install_compose_plugin: false
+docker_install_compose: false
+
+# The supplementary tasks disable every active swap first; the role removes this file.
+swap_file_state: absent
+swap_file_path: /swapfile
+
+kubernetes_pod_network_cidr: '10.244.0.0/16'
+kubernetes_service_cidr: '10.96.0.0/12'
+kubernetes_cri_socket: 'unix:///run/containerd/containerd.sock'
+kubernetes_control_plane_host: "{{ groups['k8s_control_plane'][0] }}"
+kubernetes_control_plane_ip: "{{ hostvars[kubernetes_control_plane_host].kubernetes_node_ip }}"
+kubernetes_allow_pods_on_control_plane: false
+kubernetes_join_command_extra_opts: "--cri-socket {{ kubernetes_cri_socket }}"
+# Hide the role's 'all' default so it selects init without an ignore-errors flag.
+kubernetes_ignore_preflight_errors: "{{ undef() }}"
+kubernetes_config_kubeadm_apiversion: v1beta4
+kubernetes_config_init_configuration:
+  localAPIEndpoint:
+    advertiseAddress: "{{ kubernetes_node_ip }}"
+    bindPort: 6443
+  nodeRegistration:
+    name: "{{ inventory_hostname }}"
+    criSocket: "{{ kubernetes_cri_socket }}"
+    kubeletExtraArgs:
+      - name: node-ip
+        value: "{{ kubernetes_node_ip }}"
+kubernetes_config_cluster_configuration:
+  kubernetesVersion: "{{ kubernetes_version_kubeadm }}"
+  controlPlaneEndpoint: "{{ kubernetes_control_plane_ip }}:6443"
+  networking:
+    podSubnet: "{{ kubernetes_pod_network_cidr }}"
+    serviceSubnet: "{{ kubernetes_service_cidr }}"
+    dnsDomain: cluster.local
+  apiServer:
+    certSANs: "{{ ([kubernetes_control_plane_ip, hostvars[kubernetes_control_plane_host].ansible_host, '127.0.0.1', kubernetes_control_plane_host] + kubernetes_api_extra_sans) | unique | list }}"
+kubernetes_config_kubelet_configuration:
+  cgroupDriver: systemd
+kubernetes_pod_network:
+  cni: flannel
+  cidr: "{{ kubernetes_pod_network_cidr }}"
+# Prepare this manifest before the role runs; the role applies it after kubeadm init.
+kubernetes_flannel_manifest_file: /etc/kubernetes/kube-flannel.yml
+
+# Pin a Flannel release; the downloaded manifest is rendered with the Pod CIDR.
+kubernetes_flannel_version: 'v0.28.9'
+kubernetes_flannel_manifest_url: "https://raw.githubusercontent.com/flannel-io/flannel/{{ kubernetes_flannel_version }}/Documentation/kube-flannel.yml"
+
+# Helm 3 is installed only on hosts in k8s_control_plane.
+helm_version: 'v3.21.4'
+helm_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts.architecture] }}"
+helm_download_path: "/var/cache/helm/{{ helm_version }}-{{ helm_arch }}"
+helm_archive_url: "https://get.helm.sh/helm-{{ helm_version }}-linux-{{ helm_arch }}.tar.gz"
+
+# Access from the Ansible controller through an SSH tunnel (see README.md).
+# For VPN/private access or direct public API access, override this URL.
+kubernetes_kubeconfig_server: 'https://127.0.0.1:6443'
+kubernetes_kubeconfig_local_path: "{{ playbook_dir }}/artifacts/admin.conf"
+kubernetes_api_extra_sans: []
+kubernetes_ready_timeout: '300s'

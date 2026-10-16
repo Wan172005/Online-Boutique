@@ -1,0 +1,44 @@
+---
+- name: Disable active swap
+  ansible.builtin.command: swapoff -a
+  when: ansible_facts.swaptotal_mb > 0
+  changed_when: true
+
+- name: Refresh memory facts before the swap role checks active swap
+  ansible.builtin.setup:
+    gather_subset: ['!all', '!min', hardware]
+    filter:
+      - ansible_memory_mb
+      - ansible_swaptotal_mb
+  when: ansible_facts.swaptotal_mb > 0
+
+- name: Disable swap entries on reboot
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^(\s*[^#\s]+\s+\S+\s+swap\s+.*)$'
+    replace: '# Kubernetes disabled swap: \1'
+
+- name: Check for Azure Linux Agent configuration
+  ansible.builtin.stat:
+    path: /etc/waagent.conf
+  register: azure_agent_config
+
+- name: Prevent Azure Linux Agent from re-enabling swap
+  ansible.builtin.lineinfile:
+    path: /etc/waagent.conf
+    regexp: '^ResourceDisk\.EnableSwap='
+    line: ResourceDisk.EnableSwap=n
+  when: azure_agent_config.stat.exists
+
+- name: Install operating system dependencies before the roles run
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - python3-debian
+      - iproute2
+      - iptables
+      - conntrack
+      - socat
+    state: present
+    update_cache: true
+    cache_valid_time: 3600

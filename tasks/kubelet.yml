@@ -1,0 +1,8 @@
+---
+# Write this before the role starts kubelet, including on worker nodes.
+- name: Configure kubelet to register the private node IP
+  ansible.builtin.copy:
+    dest: /etc/default/kubelet
+    content: "KUBELET_EXTRA_ARGS=--node-ip={{ kubernetes_node_ip }}\n"
+    mode: '0644'
+  register: kubernetes_kubelet_address

@@ -1,0 +1,61 @@
+---
+- name: Persist the overlay kernel module for containerd
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/kubernetes.conf
+    content: |
+      overlay
+    mode: '0644'
+
+- name: Check loaded kernel modules
+  ansible.builtin.stat:
+    path: "/sys/module/{{ item }}"
+  loop:
+    - overlay
+  register: kubernetes_modules
+
+- name: Load required kernel modules
+  ansible.builtin.command:
+    argv: [modprobe, "{{ item.item }}"]
+  loop: "{{ kubernetes_modules.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: not item.stat.exists
+  changed_when: true
+
+- name: Persist IPv4 forwarding; the Kubernetes role configures bridged traffic
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-kubernetes.conf
+    content: |
+      net.ipv4.ip_forward = 1
+    mode: '0644'
+
+- name: Apply Kubernetes sysctl settings
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/99-kubernetes.conf
+  changed_when: false
+
+- name: Create containerd configuration directory
+  ansible.builtin.file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
+
+- name: Generate defaults for the installed containerd version
+  ansible.builtin.command: containerd config default
+  register: containerd_defaults
+  changed_when: false
+
+- name: Configure containerd with CRI enabled and systemd cgroups
+  ansible.builtin.copy:
+    dest: /etc/containerd/config.toml
+    content: "{{ containerd_defaults.stdout | regex_replace('SystemdCgroup = false', 'SystemdCgroup = true') }}\n"
+    mode: '0644'
+  notify: Restart containerd
+
+- name: Apply containerd configuration before kubeadm runs
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start containerd
+  ansible.builtin.systemd_service:
+    name: containerd
+    state: started
+    enabled: true

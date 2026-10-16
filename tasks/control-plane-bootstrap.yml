@@ -1,0 +1,60 @@
+---
+# The role starts kubelet before kubeadm init. On a retry, an already configured
+# kubelet can occupy port 10250. Gate only control-plane kubelet startup until
+# kubeadm writes admin.conf, before its kubelet-start phase. Do not apply this
+# condition to workers, whose bootstrap sequence differs.
+- name: Check whether the control plane has an admin kubeconfig
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: kubernetes_control_plane_config
+
+- name: Release the kubelet port before initializing a new control plane
+  when: not kubernetes_control_plane_config.stat.exists
+  block:
+    - name: Create the kubelet systemd override directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/kubelet.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Defer control plane kubelet startup until kubeadm writes admin.conf
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/kubelet.service.d/20-ansible-kubeadm-bootstrap.conf
+        content: |
+          [Unit]
+          ConditionPathExists=/etc/kubernetes/admin.conf
+        owner: root
+        group: root
+        mode: '0644'
+      register: kubernetes_kubelet_bootstrap_override
+
+    - name: Reload systemd when the kubelet bootstrap condition changes
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: kubernetes_kubelet_bootstrap_override.changed
+
+    - name: Discover whether kubelet is already installed
+      ansible.builtin.service_facts:
+
+    - name: Stop an existing kubelet before the role runs kubeadm init
+      ansible.builtin.systemd_service:
+        name: kubelet
+        state: stopped
+      when: "'kubelet.service' in ansible_facts.services"
+
+    - name: Inspect remaining listeners on the kubelet port
+      ansible.builtin.command:
+        argv: [ss, -H, -ltnp, '( sport = :10250 )']
+      register: kubernetes_kubelet_port_listeners
+      changed_when: false
+
+    - name: Require a free kubelet port before kubeadm init
+      ansible.builtin.assert:
+        that:
+          - kubernetes_kubelet_port_listeners.stdout | trim | length == 0
+        fail_msg: >-
+          Port 10250 is still in use after stopping the kubelet service.
+          Inspect this listener on the control plane before retrying:
+          {{ kubernetes_kubelet_port_listeners.stdout }}

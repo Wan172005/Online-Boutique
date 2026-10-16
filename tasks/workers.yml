@@ -1,0 +1,32 @@
+---
+- name: Check whether the worker has already joined
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: worker_kubelet_config
+
+- name: Wait for the control plane API on the private network
+  ansible.builtin.wait_for:
+    host: "{{ kubernetes_control_plane_ip }}"
+    port: 6443
+    timeout: 60
+  when: not worker_kubelet_config.stat.exists
+
+- name: Verify that the control plane role supplied a join command
+  ansible.builtin.assert:
+    that:
+      - hostvars[kubernetes_control_plane_host].kubernetes_join_command is defined
+    fail_msg: Run the full main.yml so the control plane role supplies the worker join command.
+  when: not worker_kubelet_config.stat.exists
+
+# The role's delegated join command ends with a newline. Its node task uses
+# shell, so normalize whitespace before appending flags. Stop kubelet here,
+# after the role's earlier service-start task, immediately before join preflight.
+# kubeadm join starts kubelet again during bootstrap. The role's creates guard
+# prevents this command (including the stop) from running on an already joined node.
+- name: Prepare a single-line join command that stops kubelet before joining
+  ansible.builtin.set_fact:
+    kubernetes_join_command: >-
+      systemctl stop kubelet &&
+      {{ (hostvars[kubernetes_control_plane_host].kubernetes_join_command.split() + ['--node-name', inventory_hostname]) | join(' ') }}
+  when: not worker_kubelet_config.stat.exists
+  no_log: true

@@ -1,0 +1,132 @@
+---
+- name: Prepare Azure VMs for Kubernetes
+  hosts: k8s
+  become: true
+  any_errors_fatal: true
+
+  vars_files:
+    - vars/main.yml
+
+  pre_tasks:
+    - name: Validate cluster inventory
+      ansible.builtin.assert:
+        that:
+          - groups.get('k8s_control_plane', []) | length == 1
+          - groups.get('k8s_workers', []) | length >= 1
+          - groups['k8s_control_plane'] | intersect(groups['k8s_workers']) | length == 0
+          - ansible_play_hosts_all | sort == groups['k8s'] | sort
+        fail_msg: Use one control plane and at least one worker; run main.yml without --limit.
+      run_once: true
+      tags: [preflight]
+
+    - name: Validate VM resources and the private network
+      ansible.builtin.import_tasks: tasks/preflight.yml
+      tags: [preflight]
+
+    - name: Prepare Azure swap settings and operating system dependencies
+      ansible.builtin.import_tasks: tasks/prepare.yml
+
+  roles:
+    - role: geerlingguy.swap
+      tags: [swap]
+
+    # Install only containerd.io; Docker Engine and Compose are disabled in vars/main.yml.
+    - role: geerlingguy.docker
+      tags: [runtime]
+
+  tasks:
+    - name: Configure containerd for Kubernetes
+      ansible.builtin.import_tasks: tasks/containerd.yml
+      tags: [runtime]
+
+  handlers:
+    - name: Restart containerd
+      ansible.builtin.systemd_service:
+        name: containerd
+        state: restarted
+
+- name: Initialize the control plane and install Flannel
+  hosts: k8s_control_plane
+  become: true
+  any_errors_fatal: true
+  vars_files:
+    - vars/main.yml
+  pre_tasks:
+    - name: Prepare kubelet safely for control plane initialization
+      ansible.builtin.import_tasks: tasks/control-plane-bootstrap.yml
+      tags: [kubernetes]
+
+    - name: Prepare the Flannel manifest for the Kubernetes role
+      ansible.builtin.import_tasks: tasks/control-plane.yml
+      tags: [kubernetes]
+
+    - name: Configure kubelet's private node address
+      ansible.builtin.import_tasks: tasks/kubelet.yml
+      tags: [kubernetes]
+
+  roles:
+    - role: geerlingguy.kubernetes
+      kubernetes_role: control_plane
+      tags: [kubernetes]
+
+  post_tasks:
+    - name: Remove the temporary kubelet startup condition after initialization
+      ansible.builtin.file:
+        path: /etc/systemd/system/kubelet.service.d/20-ansible-kubeadm-bootstrap.conf
+        state: absent
+      register: kubernetes_kubelet_bootstrap_cleanup
+      tags: [kubernetes]
+
+    - name: Reload systemd after removing the bootstrap condition
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: kubernetes_kubelet_bootstrap_cleanup.changed
+      tags: [kubernetes]
+
+    - name: Hold the Kubernetes package versions installed by the role
+      ansible.builtin.import_tasks: tasks/packages.yml
+      tags: [kubernetes]
+
+    - name: Install private kubeconfig files for the SSH user and root
+      ansible.builtin.import_tasks: tasks/kubeconfig.yml
+      tags: [kubernetes]
+
+    - name: Install Helm 3 on the control plane
+      ansible.builtin.import_tasks: tasks/helm.yml
+      tags: [helm]
+
+- name: Join workers to the cluster
+  hosts: k8s_workers
+  become: true
+  any_errors_fatal: true
+  vars_files:
+    - vars/main.yml
+  pre_tasks:
+    - name: Configure kubelet's private node address
+      ansible.builtin.import_tasks: tasks/kubelet.yml
+      tags: [kubernetes]
+
+    - name: Prepare the worker to join using the role's join command
+      ansible.builtin.import_tasks: tasks/workers.yml
+      tags: [kubernetes]
+
+  roles:
+    - role: geerlingguy.kubernetes
+      kubernetes_role: node
+      tags: [kubernetes]
+
+  post_tasks:
+    - name: Hold the Kubernetes package versions installed by the role
+      ansible.builtin.import_tasks: tasks/packages.yml
+      tags: [kubernetes]
+
+- name: Verify the cluster and export kubeconfig
+  hosts: k8s_control_plane
+  become: true
+  any_errors_fatal: true
+  vars_files:
+    - vars/main.yml
+  tasks:
+    - name: Verify the cluster
+      ansible.builtin.import_tasks: tasks/verify.yml
+      tags: [verify]

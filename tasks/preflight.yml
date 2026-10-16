@@ -1,0 +1,62 @@
+---
+- name: Validate the operating system and VM resources
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution == 'Ubuntu'
+      - ansible_facts.distribution_version == '24.04'
+      - ansible_facts.service_mgr == 'systemd'
+      - ansible_facts.memtotal_mb >= 1700
+      - inventory_hostname is match('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
+      - inventory_hostname | length <= 63
+      - inventory_hostname not in groups['k8s_control_plane'] or ansible_facts.processor_vcpus >= 2
+    fail_msg: Use Ubuntu 24.04 with at least 2 GB RAM per VM and 2 vCPUs on the control plane; host aliases must be valid node names.
+
+- name: Detect the node's private IP address
+  ansible.builtin.set_fact:
+    kubernetes_node_ip: "{{ kubernetes_private_ip | default(ansible_facts.default_ipv4.address) }}"
+
+- name: Verify the node IP belongs to a VM interface
+  ansible.builtin.assert:
+    that:
+      - kubernetes_node_ip in ansible_facts.all_ipv4_addresses
+      - kubernetes_node_ip != '127.0.0.1'
+    fail_msg: kubernetes_private_ip must be an IPv4 address on this VM, not its Azure public IP.
+
+- name: Show the network addresses selected for each node
+  ansible.builtin.debug:
+    msg:
+      node: "{{ inventory_hostname }}"
+      ssh_address: "{{ ansible_host }}"
+      cluster_private_address: "{{ kubernetes_node_ip }}"
+      default_interface: "{{ ansible_facts.default_ipv4.interface }}"
+      default_subnet: "{{ ansible_facts.default_ipv4.network }}/{{ ansible_facts.default_ipv4.prefix }}"
+
+- name: Verify that each node has a distinct private address
+  vars:
+    kubernetes_resolved_node_ips: "{{ dict(groups['k8s'] | zip(groups['k8s'] | map('extract', hostvars, 'kubernetes_node_ip'))) }}"
+  ansible.builtin.assert:
+    that:
+      - groups['k8s'] | map('extract', hostvars, 'kubernetes_node_ip') | unique | list | length == groups['k8s'] | length
+    fail_msg: >-
+      Duplicate private IPs detected: {{ kubernetes_resolved_node_ips | to_json }}.
+      Check each VM's VNet/subnet in Azure. Use the same VNet, or VNets with
+      non-overlapping address spaces and peering. kubernetes_private_ip must be
+      an actual IP on the VM's NIC. See README.md: Duplicate private IPs.
+  run_once: true
+
+- name: Validate network CIDRs before making changes
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -c
+      - |
+        import ipaddress, sys
+        pods, services = [ipaddress.IPv4Network(x) for x in sys.argv[1:3]]
+        assert not pods.overlaps(services), 'Pod and Service CIDRs overlap'
+        for value in sys.argv[3:]:
+            node = ipaddress.IPv4Address(value)
+            assert node not in pods and node not in services, 'Node IP overlaps a cluster CIDR'
+      - "{{ kubernetes_pod_network_cidr }}"
+      - "{{ kubernetes_service_cidr }}"
+      - "{{ kubernetes_node_ip }}"
+  changed_when: false

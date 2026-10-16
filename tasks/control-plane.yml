@@ -1,0 +1,23 @@
+---
+- name: Create the directory for the role's local Flannel manifest
+  ansible.builtin.file:
+    path: /etc/kubernetes
+    state: directory
+    mode: '0755'
+
+- name: Download the pinned upstream Flannel manifest
+  ansible.builtin.get_url:
+    url: "{{ kubernetes_flannel_manifest_url }}"
+    dest: /etc/kubernetes/kube-flannel-upstream.yml
+    mode: '0644'
+
+- name: Read the upstream Flannel manifest
+  ansible.builtin.slurp:
+    src: /etc/kubernetes/kube-flannel-upstream.yml
+  register: flannel_upstream
+
+- name: Render Flannel with the configured Pod CIDR and node interface selection
+  ansible.builtin.template:
+    src: kube-flannel.yml.j2
+    dest: /etc/kubernetes/kube-flannel.yml
+    mode: '0644'

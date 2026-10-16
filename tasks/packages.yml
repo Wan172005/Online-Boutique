@@ -1,0 +1,16 @@
+---
+- name: Hold Kubernetes packages against automatic upgrades
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: Restart kubelet when its private IP configuration changed
+  ansible.builtin.systemd_service:
+    name: kubelet
+    state: restarted
+    daemon_reload: true
+  when: kubernetes_kubelet_address.changed
