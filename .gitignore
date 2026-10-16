@@ -1,0 +1,24 @@
+# Local inventory and administrative credentials
+/inventory.ini
+/artifacts/
+/secrets/
+/.azure/
+/.aws/
+/.agents/
+/.codex/
+/.env
+/.env.*
+!/.env.example
+*.pem
+*.key
+*.p12
+/admin.conf
+/kubeconfig*
+
+# Installed dependencies and generated files
+/roles/
+/collections/
+/.vagrant/
+__pycache__/
+*.pyc
+*.retry

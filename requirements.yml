@@ -1,0 +1,19 @@
+---
+# Match the role versions already installed in ./roles.
+roles:
+  - name: geerlingguy.swap
+    version: '2.1.0'
+  - name: geerlingguy.docker
+    version: '8.0.0'
+  - name: geerlingguy.kubernetes
+    version: '8.2.0'
+
+collections:
+  # mount/sysctl and modprobe are used by the existing roles.
+  - name: ansible.posix
+    version: '>=1.5.0,<2.0.0'
+  - name: community.general
+    version: '>=8.0.0,<10.0.0'
+  # Used only by examples/.
+  - name: kubernetes.core
+    version: '>=3.0.0,<6.0.0'

@@ -1,0 +1,22 @@
+# Example only: replace these documentation addresses with your Azure public IPs.
+[k8s_control_plane]
+master ansible_host=203.0.113.10
+
+[k8s_workers]
+worker ansible_host=203.0.113.20
+
+[vms:children]
+k8s_control_plane
+k8s_workers
+
+[k8s:children]
+vms
+
+[vms:vars]
+ansible_user=azureuser
+ansible_port=22
+ansible_ssh_private_key_file=~/.ssh/azure_vm_key.pem
+ansible_python_interpreter=/usr/bin/python3
+
+# ansible_host is the SSH/public IP; private IPs are detected from each VM.
+# For multiple NICs, add kubernetes_private_ip=<actual-private-ip> to each host.
