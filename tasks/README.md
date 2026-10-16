@@ -1,6 +1,6 @@
-# Task files dựng Kubernetes cluster
+# Task files dựng và kiểm tra Kubernetes/Online Boutique
 
-Các file dưới đây được `main.yml` import; không chạy trực tiếp như playbook.
+Các file được playbook cha import.
 
 ## preflight.yml — Kiểm tra trước khi cấu hình VM
 
@@ -77,3 +77,13 @@ ansible-playbook main.yml --tags helm --limit k8s_control_plane
 File tạo thư mục kubeconfig local với mode `0700`, fetch `/etc/kubernetes/admin.conf`, thay server endpoint theo `kubernetes_kubeconfig_server` và đặt file thành `0600`. Mặc định lưu tại `artifacts/admin.conf`, trỏ `https://127.0.0.1:6443`; khi truy cập từ local cần SSH tunnel. Cuối cùng in node/private IP và vị trí kubeconfig.
 
 Đây là kiểm tra **cluster** ở Part 2. Việc kiểm tra ứng dụng Part 4 nằm trong `boutique-verify.yml`, được playbook riêng gọi.
+
+## boutique-verify.yml — Xác nhận Online Boutique theo Part 4
+
+[boutique-verify.yml](boutique-verify.yml) được [../playbooks/verify.yml](../playbooks/verify.yml) gọi sau khi playbook thu thập IP NIC từ tất cả node. File chỉ dùng command đọc/đợi tài nguyên, facts, assertion và HTTP GET; không cài dependency hoặc sửa ứng dụng.
+
+File assert node Ready và InternalIP khớp `hostvars[node].kubernetes_node_ip`; đợi rollout của 11 Deployment trong `boutique_expected_deployments`, rồi kiểm tra generation và số replica cập nhật/Ready/available, không cho replica yêu cầu bằng 0. File kiểm tra Service checkoutservice port 5050, không còn Deployment/Service `servicename`, frontend là NodePort với HTTP port 80 và NodePort hợp lệ.
+
+Cuối cùng, `uri` gọi storefront qua IP private worker từ master, yêu cầu HTTP 200 và nội dung khớp `boutique_storefront_pattern`. URL có thể override bằng `boutique_verify_url`; số lần thử lại/thời gian chờ giữa các lần lấy từ `boutique_verify_retries`/`boutique_verify_delay`. Kết quả in cả URL kiểm tra nội bộ và URL public cho trình duyệt. Các thao tác chỉ đọc vẫn chạy trong check mode, vì vậy `--check` vẫn kiểm tra cluster thật.
+
+Chạy từ root bằng `ansible-playbook playbooks/verify.yml`, không dùng `--limit`. Verification không thay thế thử giỏ hàng/đặt hàng bằng trình duyệt.

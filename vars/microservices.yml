@@ -7,6 +7,23 @@ boutique_helm_binary: /usr/local/bin/helm
 boutique_kubeconfig: /etc/kubernetes/admin.conf
 boutique_timeout: 10m
 
+# Resource names rendered by the upstream charts, rather than Helm release names.
+boutique_expected_deployments:
+  - redis-cart
+  - emailservice
+  - currencyservice
+  - paymentservice
+  - productcatalogservice
+  - shippingservice
+  - adservice
+  - cartservice
+  - recommendationservice
+  - checkoutservice
+  - frontend
+boutique_storefront_pattern: '(?i)(Online Boutique|Hipster Shop)'
+boutique_verify_retries: 12
+boutique_verify_delay: 5
+
 # Keep one copy of each application component on the lab worker.
 boutique_common:
   appReplicas: 1

@@ -78,6 +78,39 @@ Playbook đọc Service `frontend` và in URL `http://20.2.248.1:<NODE_PORT>/`. 
 
 **Minh chứng báo cáo:** PLAY RECAP triển khai, 11 release, effective values frontend/checkout, URL thực tế và ảnh storefront.
 
+## Part 4 — Verify and Use the Application
+
+Chạy verification từ máy điều khiển sau Part 3:
+
+```bash
+ansible-playbook playbooks/verify.yml --syntax-check
+ansible-playbook playbooks/verify.yml
+```
+
+[playbooks/verify.yml](playbooks/verify.yml) thu thập địa chỉ mạng trên cả hai VM, sau đó gọi [tasks/boutique-verify.yml](tasks/boutique-verify.yml) trên master để kiểm tra:
+
+1. Mỗi node trong inventory Ready và có InternalIP khớp IP trên NIC đã chọn khi dựng cluster.
+2. Đủ 11 Deployment dự kiến; revision hiện tại đã được controller ghi nhận, số replica cập nhật/Ready/available đáp ứng số replica yêu cầu và không scale về 0.
+3. Deployment/Service mang tên `checkoutservice`, Service có port 5050 và không còn tài nguyên tên mặc định `servicename`.
+4. Service `frontend` là NodePort, HTTP port 80 có NodePort trong khoảng 30000–32767.
+5. HTTP từ master tới NodePort qua IP private worker trả `200` và chứa nội dung nhận diện Online Boutique/Hipster Shop.
+
+Các thao tác kiểm tra chỉ đọc, không cài dependency hay chỉnh tài nguyên ứng dụng. Không dùng `--limit`, vì playbook cần địa chỉ thực tế của cả hai VM. Có thể đặt `kubernetes_private_ip` trên từng host nếu có nhiều NIC. Kết quả in URL public để demo; kiểm tra HTTP nội bộ chưa xác nhận rule NSG cho máy truy cập từ ngoài Azure.
+
+Để tự kiểm tra cluster và ứng dụng, **hãy vào trực tiếp VM master** rồi chạy:
+
+```bash
+ssh -i ~/.ssh/OpenStack-VM_key.pem azureuser@20.255.48.151
+kubectl get nodes -o wide
+kubectl -n microservice get deployments,pods,services -o wide
+kubectl -n microservice get deployment/checkoutservice service/checkoutservice service/frontend
+helm -n microservice list
+```
+
+Mở URL public từ Part 3, xem sản phẩm, thêm vào giỏ rồi tải lại trang và hoàn tất đặt hàng. Chụp storefront, giỏ hàng và trang xác nhận đơn hàng. Theo PDF, Redis dùng `emptyDir`, nên không bảo đảm dữ liệu khi Pod Redis bị tạo lại.
+
+**Minh chứng báo cáo:** PLAY RECAP verification, ảnh storefront/đơn hàng và kết quả từng thao tác. HTTP 200 trang chủ chưa chứng minh checkout thành công.
+
 ## Nguồn gốc
 
 Dựa trên ví dụ Kubernetes trong Ansible for DevOps của Jeff Geerling, điều chỉnh cho hai VM Azure có sẵn. Yêu cầu đối chiếu lấy từ [Project01_Ansible.pdf](Project01_Ansible.pdf).

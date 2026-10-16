@@ -1,0 +1,144 @@
+---
+- name: Require distinct node addresses and eleven expected application Deployments
+  ansible.builtin.assert:
+    that:
+      - groups['k8s'] | map('extract', hostvars, 'kubernetes_node_ip') | unique | list | length == groups['k8s'] | length
+      - boutique_expected_deployments | length == 11
+      - boutique_expected_deployments | unique | list | length == 11
+      - "'checkoutservice' in boutique_expected_deployments"
+      - "'frontend' in boutique_expected_deployments"
+
+- name: Read registered Kubernetes nodes
+  ansible.builtin.command:
+    argv: [kubectl, "--kubeconfig={{ boutique_kubeconfig }}", get, nodes, -o, json]
+  register: boutique_node_result
+  changed_when: false
+  check_mode: false
+
+- name: Require every inventory node to be Ready at its expected private address
+  vars:
+    boutique_node: >-
+      {{ (boutique_node_result.stdout | from_json)['items']
+         | selectattr('metadata.name', 'equalto', item) | first | default({}) }}
+  ansible.builtin.assert:
+    that:
+      - boutique_node | length > 0
+      - boutique_node.get('status', {}).get('conditions', []) | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length == 1
+      - hostvars[item].kubernetes_node_ip in (boutique_node.get('status', {}).get('addresses', []) | selectattr('type', 'equalto', 'InternalIP') | map(attribute='address') | list)
+    fail_msg: "Node {{ item }} must be Ready with InternalIP {{ hostvars[item].kubernetes_node_ip }}."
+  loop: "{{ groups['k8s'] }}"
+
+- name: Wait for each expected application Deployment to finish its rollout
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - "--kubeconfig={{ boutique_kubeconfig }}"
+      - "--namespace={{ boutique_namespace }}"
+      - rollout
+      - status
+      - "deployment/{{ item }}"
+      - "--timeout={{ boutique_timeout }}"
+  loop: "{{ boutique_expected_deployments }}"
+  changed_when: false
+  check_mode: false
+
+- name: Read application Deployments
+  ansible.builtin.command:
+    argv: [kubectl, "--kubeconfig={{ boutique_kubeconfig }}", "--namespace={{ boutique_namespace }}", get, deployments, -o, json]
+  register: boutique_deployment_result
+  changed_when: false
+  check_mode: false
+
+- name: Require available replicas from the current revision of all eleven Deployments
+  vars:
+    boutique_deployment: >-
+      {{ (boutique_deployment_result.stdout | from_json)['items']
+         | selectattr('metadata.name', 'equalto', item) | first | default({}) }}
+    boutique_desired_replicas: "{{ boutique_deployment.get('spec', {}).get('replicas', 1) }}"
+    boutique_deployment_status: "{{ boutique_deployment.get('status', {}) }}"
+  ansible.builtin.assert:
+    that:
+      - boutique_deployment | length > 0
+      - boutique_desired_replicas | int > 0
+      - boutique_deployment_status.get('observedGeneration', 0) | int >= boutique_deployment.get('metadata', {}).get('generation', 1) | int
+      - boutique_deployment_status.get('updatedReplicas', 0) | int >= boutique_desired_replicas | int
+      - boutique_deployment_status.get('readyReplicas', 0) | int >= boutique_desired_replicas | int
+      - boutique_deployment_status.get('availableReplicas', 0) | int >= boutique_desired_replicas | int
+      - boutique_deployment_status.get('unavailableReplicas', 0) | int == 0
+    fail_msg: "Deployment {{ item }} must have its requested replicas updated, Ready and available."
+  loop: "{{ boutique_expected_deployments }}"
+
+- name: Read application Services
+  ansible.builtin.command:
+    argv: [kubectl, "--kubeconfig={{ boutique_kubeconfig }}", "--namespace={{ boutique_namespace }}", get, services, -o, json]
+  register: boutique_service_result
+  changed_when: false
+  check_mode: false
+
+- name: Select the checkout and frontend Services
+  ansible.builtin.set_fact:
+    boutique_verified_checkout: >-
+      {{ (boutique_service_result.stdout | from_json)['items']
+         | selectattr('metadata.name', 'equalto', 'checkoutservice') | first | default({}) }}
+    boutique_verified_frontend: >-
+      {{ (boutique_service_result.stdout | from_json)['items']
+         | selectattr('metadata.name', 'equalto', 'frontend') | first | default({}) }}
+
+- name: Require the correct checkout Service and reject the upstream fallback name
+  ansible.builtin.assert:
+    that:
+      - boutique_verified_checkout | length > 0
+      - boutique_verified_checkout.get('spec', {}).get('ports', []) | selectattr('port', 'equalto', 5050) | list | length > 0
+      - (boutique_service_result.stdout | from_json)['items'] | selectattr('metadata.name', 'equalto', 'servicename') | list | length == 0
+      - (boutique_deployment_result.stdout | from_json)['items'] | selectattr('metadata.name', 'equalto', 'servicename') | list | length == 0
+    fail_msg: checkoutservice must expose port 5050; no application resource may use the fallback name servicename.
+
+- name: Select the frontend HTTP port
+  ansible.builtin.set_fact:
+    boutique_verified_frontend_port: >-
+      {{ boutique_verified_frontend.get('spec', {}).get('ports', [])
+         | selectattr('port', 'equalto', 80) | first | default({}) }}
+
+- name: Require a frontend NodePort for HTTP
+  ansible.builtin.assert:
+    that:
+      - boutique_verified_frontend.get('spec', {}).get('type', '') == 'NodePort'
+      - boutique_verified_frontend_port.get('nodePort', 0) | int >= 30000
+      - boutique_verified_frontend_port.get('nodePort', 0) | int <= 32767
+    fail_msg: frontend must be a NodePort Service exposing HTTP port 80 with an allocated NodePort.
+
+- name: Build the storefront verification address through the worker private network
+  ansible.builtin.set_fact:
+    boutique_verified_url: >-
+      {{ boutique_verify_url | default('http://' + hostvars[groups['k8s_workers'][0]].kubernetes_node_ip
+         + ':' + (boutique_verified_frontend_port.nodePort | string) + '/') }}
+
+- name: Require HTTP 200 and recognisable storefront content
+  ansible.builtin.uri:
+    url: "{{ boutique_verified_url }}"
+    status_code: 200
+    return_content: true
+    use_proxy: false
+    timeout: 10
+  register: boutique_storefront_response
+  until:
+    - boutique_storefront_response.status | default(0) == 200
+    - boutique_storefront_response.content | default('') is search(boutique_storefront_pattern)
+  retries: "{{ boutique_verify_retries }}"
+  delay: "{{ boutique_verify_delay }}"
+  check_mode: false
+
+- name: Assert the storefront response even when HTTP retries are disabled
+  ansible.builtin.assert:
+    that:
+      - boutique_storefront_response.status | default(0) == 200
+      - boutique_storefront_response.content | default('') is search(boutique_storefront_pattern)
+    fail_msg: "{{ boutique_verified_url }} must return HTTP 200 with recognisable storefront content."
+
+- name: Report verification results and the browser address
+  ansible.builtin.debug:
+    msg:
+      - "Verified inventory nodes: Ready with the expected private IPs."
+      - "Verified 11 Deployments, checkoutservice, frontend NodePort and storefront HTTP 200/content."
+      - "HTTP checked from the control plane: {{ boutique_verified_url }}"
+      - "Browser URL: http://{{ hostvars[groups['k8s_workers'][0]].ansible_host }}:{{ boutique_verified_frontend_port.nodePort }}/"

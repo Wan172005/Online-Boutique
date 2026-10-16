@@ -1,0 +1,45 @@
+---
+- name: Discover the expected private address of every inventory node
+  hosts: k8s
+  become: true
+  any_errors_fatal: true
+  gather_subset:
+    - '!all'
+    - '!min'
+    - network
+
+  tasks:
+    - name: Require the complete cluster inventory for verification
+      ansible.builtin.assert:
+        that:
+          - groups.get('k8s_control_plane', []) | length == 1
+          - groups.get('k8s_workers', []) | length >= 1
+          - groups['k8s_control_plane'] | intersect(groups['k8s_workers']) | length == 0
+          - ansible_play_hosts_all | sort == groups['k8s'] | sort
+        fail_msg: Run playbooks/verify.yml for the complete cluster without --limit.
+      run_once: true
+
+    - name: Resolve the node address using the same selection as cluster setup
+      ansible.builtin.set_fact:
+        kubernetes_node_ip: "{{ kubernetes_private_ip | default(ansible_facts.default_ipv4.address) }}"
+
+    - name: Require the selected node address to belong to its VM
+      ansible.builtin.assert:
+        that:
+          - kubernetes_node_ip in ansible_facts.all_ipv4_addresses
+          - kubernetes_node_ip != '127.0.0.1'
+        fail_msg: kubernetes_private_ip must be an address on this VM's cluster interface.
+
+- name: Verify the Kubernetes nodes and Online Boutique application
+  hosts: k8s_control_plane
+  become: true
+  gather_facts: false
+  any_errors_fatal: true
+
+  vars_files:
+    - ../vars/main.yml
+    - ../vars/microservices.yml
+
+  tasks:
+    - name: Check node addresses, application resources and storefront HTTP response
+      ansible.builtin.import_tasks: ../tasks/boutique-verify.yml
