@@ -1,0 +1,16 @@
+---
+- name: Remove Online Boutique while keeping the Kubernetes cluster
+  hosts: k8s_control_plane
+  become: true
+  any_errors_fatal: true
+
+  vars_files:
+    - ../vars/microservices.yml
+
+  pre_tasks:
+    - name: Prepare Python dependencies for the Helm module
+      ansible.builtin.import_tasks: ../examples/tasks/client.yml
+
+  tasks:
+    - name: Remove the application and verify the remaining cluster
+      ansible.builtin.import_tasks: ../tasks/boutique-teardown.yml

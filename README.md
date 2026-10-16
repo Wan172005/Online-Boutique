@@ -2,7 +2,57 @@
 
 Project dựng Kubernetes bằng `kubeadm` trên hai VM **Ubuntu 24.04** có sẵn trong Azure: một control plane và một worker. Ansible cấu hình containerd, Flannel, Kubernetes, Helm 3, sau đó triển khai Online Boutique qua `kubernetes.core.helm`.
 
-Yêu cầu tham khảo: [Project01_Ansible.pdf](Project01_Ansible.pdf). Inventory thật được giữ ở local; dùng [inventory.ini.example](inventory.ini.example) làm mẫu.
+Tài liệu đối chiếu: [Project01_Ansible.pdf](Project01_Ansible.pdf), Part 1–5 ở trang 3–6; rubric ở trang 6–7. Các lệnh Ansible chạy từ folder `online-boutique/` trên máy điều khiển; các lệnh `kubectl` chạy trực tiếp trên VM master. Mã nguồn đã bổ sung kiểm tra Part 2 và Part 4; chưa chạy xác nhận trên VM thực tế.
+
+## Hạ tầng và cấu trúc
+
+Inventory thật `inventory.ini` được giữ ở local và nằm trong `.gitignore`. Khi tải project, sao chép [inventory.ini.example](inventory.ini.example) thành `inventory.ini`, rồi sửa địa chỉ VM, SSH user và đường dẫn key. IP public của môi trường hiện tại:
+
+| Node | Nhóm inventory | Vai trò | IP public/SSH |
+| --- | --- | --- | --- |
+| `master` | `k8s_control_plane` | Control plane | `20.255.48.151` |
+| `worker` | `k8s_workers` | Worker | `20.2.248.1` |
+
+SSH dùng `azureuser`, key `~/.ssh/OpenStack-VM_key.pem`. IP public dùng cho SSH và truy cập frontend NodePort. Playbook lấy IP trên NIC mặc định để cấu hình cluster; có thể khai báo `kubernetes_private_ip` trên từng host nếu có nhiều NIC. Hai VM cần IP private khác nhau và kết nối được với nhau.
+
+| Đường dẫn | Nội dung |
+| --- | --- |
+| [main.yml](main.yml) | Chuẩn bị VM, dựng control plane, join worker và kiểm tra cluster. |
+| [playbooks/verify.yml](playbooks/verify.yml) | Kiểm tra node/private IP, 11 Deployment, Service và HTTP storefront. |
+| [vars/main.yml](vars/main.yml) | Phiên bản phần mềm, mạng cluster, cấu hình role và kubeconfig. |
+| [vars/microservices.yml](vars/microservices.yml) | Repository chart, namespace, 11 release và ba override ứng dụng. |
+| [requirements.yml](requirements.yml) | Role và collection cần cài trên máy chạy Ansible. |
+| [ansible.cfg](ansible.cfg) | Inventory mặc định, đường dẫn role và tùy chọn SSH. |
+| [tasks/README.md](tasks/README.md) | Giải thích từng task file `.yml`. |
+| [playbooks/README.md](playbooks/README.md) | Giải thích playbook verification và teardown. |
+| [examples/README.md](examples/README.md) | Giải thích riêng `online-boutique.yml`. |
+| [templates/kube-flannel.yml.j2](templates/kube-flannel.yml.j2) | Render Flannel với Pod CIDR và interface theo IP node. |
+
+Phiên bản đang khai báo: Kubernetes `1.35.9`, Flannel `v0.28.9`, Helm `v3.21.4`. Đây là giá trị cấu hình trong mã nguồn, chưa xác nhận khả năng tải package/image trong lần kiểm tra này. Đổi biến phiên bản trên cluster đang chạy không thay thế quy trình nâng cấp.
+
+## Tình trạng 5 Part
+
+Bảng dưới phản ánh mã nguồn hiện có. Cần chạy trên VM và thu thập bằng chứng trước khi kết luận đáp ứng toàn bộ PDF.
+
+| Part | Đã có | Chưa đủ hoặc khác PDF |
+| --- | --- | --- |
+| 1 — Create the Virtual Machines | Người thực hiện tự chuẩn bị hai VM Azure và cấu hình inventory. | Khác môi trường Vagrant của PDF; lưu minh chứng VM/network. |
+| 2 — Build the Kubernetes Cluster | `main.yml` dựng cluster, đợi node, Flannel/CoreDNS và toàn bộ Pod `kube-system` Ready. | Cần log dựng sạch và chạy lại trên VM. |
+| 3 — Deploy the Online Boutique | `examples/online-boutique.yml` clone chart, triển khai 11 Helm release vào `microservice`; đủ ba override. | Chưa có bằng chứng storefront/checkout hoạt động. `boutique_revision: main` chưa cố định commit chart để tái lập cùng phiên bản; đây là điểm nên cải thiện, không phải yêu cầu riêng của Part 3. |
+| 4 — Verify and Use the Application | `playbooks/verify.yml` assert node/private IP, 11 Deployment, checkoutservice, frontend NodePort và HTTP 200/nội dung storefront. | Cần chạy verification trên VM và chụp bằng chứng mua hàng. |
+| 5 — Teardown and Low-Memory Hosts | Có playbook gỡ 11 release, xác nhận release đã mất và API còn truy cập được; giữ cluster. Đã đặt `appReplicas: 1`. | Chưa có log teardown thực tế; dừng/xóa VM Azure là thao tác riêng. Cần minh chứng tương ứng nếu Azure được chấp nhận thay Vagrant. |
+
+Ngoài 5 Part, **rubric trang 6–7 còn yêu cầu** các nội dung chưa thấy đủ mã nguồn hoặc bằng chứng trong folder:
+
+- Hai thí nghiệm chẩn đoán mạng, phân biệt lỗi interface Flannel với lỗi IP kubelet.
+- Tái hiện lỗi checkoutservice, báo cáo điều tra và đề xuất ngăn lỗi tái diễn. Hiện chỉ có override sửa tên.
+- Ingress controller cài qua Ansible, định tuyến hostname, frontend trở về ClusterIP và mở rộng verification.
+- Chart mở rộng được lưu trong project, limits dựa trên đo đạc, probes cho ít nhất bốn service và minh chứng restart.
+- Scaling bằng Ansible, thực hiện drain và giải thích PodDisruptionBudget.
+- Bằng chứng idempotency: `changed=0` ở lần chạy thứ hai, hai log chạy lại theo yêu cầu nộp bài và giải thích task chưa idempotent nếu có. Role Kubernetes đặt mode kubeconfig/root directory rồi task bổ sung đặt lại mode chặt hơn; đây là điểm cần kiểm tra bằng PLAY RECAP. Role cũng tạo join token mới dù task khai báo `changed_when: false`, nên không chỉ dựa vào recap để giải thích hành vi.
+- Bộ nộp bài: repository có `.git`, `report.pdf`, thư mục `screenshots/` và `recap.txt` từ lần dựng sạch cùng hai lần kiểm tra idempotency.
+
+Part 2 và Part 4 đã được bổ sung trong mã nguồn. Các nội dung rubric và bằng chứng thực tế nêu trên vẫn cần hoàn thiện.
 
 ## Part 1 — Create the Virtual Machines
 
@@ -110,6 +160,45 @@ helm -n microservice list
 Mở URL public từ Part 3, xem sản phẩm, thêm vào giỏ rồi tải lại trang và hoàn tất đặt hàng. Chụp storefront, giỏ hàng và trang xác nhận đơn hàng. Theo PDF, Redis dùng `emptyDir`, nên không bảo đảm dữ liệu khi Pod Redis bị tạo lại.
 
 **Minh chứng báo cáo:** PLAY RECAP verification, ảnh storefront/đơn hàng và kết quả từng thao tác. HTTP 200 trang chủ chưa chứng minh checkout thành công.
+
+## Part 5 — Teardown and Low-Memory Hosts
+
+Theo PDF trang 6, gỡ ứng dụng phải giữ cluster; dừng VM giữ đĩa khác với xóa VM. PDF không đặt thêm ngưỡng RAM riêng trong Part 5.
+
+Các lệnh dưới gỡ ứng dụng khi bạn chủ động thực hiện:
+
+```bash
+ansible-playbook playbooks/teardown.yml --syntax-check
+ansible-playbook playbooks/teardown.yml --check
+ansible-playbook playbooks/teardown.yml
+```
+
+`--check` chỉ dự kiến thay đổi, bỏ qua xác nhận sau gỡ và không thay thế kết quả chạy thật. Playbook gỡ 11 release theo thứ tự ngược triển khai, đợi tài nguyên bị xóa, xác nhận không còn release và lấy danh sách node. Bước cuối xác nhận API còn truy cập được, chưa assert tất cả node Ready. Xem [playbooks/README.md](playbooks/README.md).
+
+Namespace `microservice`, cluster, runtime, Helm, kubeconfig và VM được giữ lại. Dữ liệu gắn với tài nguyên ứng dụng bị xóa có thể mất. Triển khai lại bằng:
+
+```bash
+ansible-playbook examples/online-boutique.yml
+```
+
+Với VM ít RAM, hiện đã có `appReplicas: 1`. Vào từng VM và chạy `free -h` để xem bộ nhớ. Để kiểm tra workload, **hãy vào trực tiếp VM master** rồi chạy:
+
+```bash
+kubectl -n microservice get pods -o wide
+kubectl -n microservice describe pods
+```
+
+Dựa trên kết quả để quyết định tăng RAM hoặc thêm worker.
+
+Trong PDF, `vagrant halt` dừng VM và giữ đĩa; `vagrant destroy -f` xóa VM. Chúng không áp dụng cho inventory Azure này. Thực hiện riêng trong Azure Portal: **Stop** rồi kiểm tra trạng thái deallocated khi muốn dừng; **Delete** và kiểm tra lựa chọn disk/NIC/public IP khi muốn xóa. Teardown Ansible không thực hiện các thao tác VM.
+
+**Minh chứng báo cáo:** PLAY RECAP teardown, 11 release không còn, danh sách node sau gỡ, phân biệt gỡ app/dừng VM/xóa VM và tác dụng của giảm replica.
+
+## Chuẩn bị báo cáo và nộp bài
+
+PDF yêu cầu mỗi Part một mục báo cáo; bộ nộp gồm repository có lịch sử Git, `report.pdf`, `screenshots/`, `recap.txt`. Cần ghi lại lần dựng thành công từ VM sạch và hai lần chạy lại kiểm tra idempotency. Chạy lại các playbook dựng cluster và triển khai ứng dụng theo phạm vi báo cáo; chưa có kết quả `changed=0` trong lần rà soát này.
+
+Không đưa SSH private key, kubeconfig hoặc join token vào bài nộp. `artifacts/admin.conf` là credential quản trị; `artifacts/` đã được ignore nhưng vẫn cần loại khỏi archive nếu nén trực tiếp cả folder. Rubric về Ingress, probes/limits, scaling và chẩn đoán cần hoàn thiện bên cạnh 5 Part cơ bản.
 
 ## Nguồn gốc
 

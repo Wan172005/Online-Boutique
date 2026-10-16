@@ -1,0 +1,55 @@
+---
+# Remove callers before their backends; Redis is removed last.
+# Only named application releases are removed, so a shared namespace is retained.
+- name: Uninstall Online Boutique releases in reverse deployment order
+  kubernetes.core.helm:
+    name: "{{ item.name }}"
+    binary_path: "{{ boutique_helm_binary }}"
+    kubeconfig: "{{ boutique_kubeconfig }}"
+    release_namespace: "{{ boutique_namespace }}"
+    state: absent
+    purge: true
+    wait: true
+    # kubernetes.core 3.x-5.x uses wait_timeout for the uninstall command.
+    wait_timeout: "{{ boutique_timeout }}"
+  loop: "{{ boutique_releases | reverse | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Verify application removal and Kubernetes API access
+  when: not ansible_check_mode
+  block:
+    - name: Inspect each application release including failed or pending releases
+      kubernetes.core.helm_info:
+        name: "{{ item.name }}"
+        binary_path: "{{ boutique_helm_binary }}"
+        kubeconfig: "{{ boutique_kubeconfig }}"
+        release_namespace: "{{ boutique_namespace }}"
+        release_state: [all]
+      loop: "{{ boutique_releases }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: boutique_remaining_releases
+
+    - name: Require all Online Boutique releases to be absent
+      ansible.builtin.assert:
+        that:
+          - item.status is not defined
+        fail_msg: "Release {{ item.item.name }} still exists in {{ boutique_namespace }}."
+        quiet: true
+      loop: "{{ boutique_remaining_releases.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: Read cluster nodes after application teardown
+      ansible.builtin.command:
+        argv: [kubectl, "--kubeconfig={{ boutique_kubeconfig }}", get, nodes, -o, wide]
+      register: boutique_cluster_after_teardown
+      changed_when: false
+
+    - name: Report application teardown and the remaining cluster
+      ansible.builtin.debug:
+        msg:
+          - "Online Boutique releases have been removed from {{ boutique_namespace }}."
+          - "The namespace, cluster, Helm binary and VMs are retained."
+          - "{{ boutique_cluster_after_teardown.stdout_lines }}"

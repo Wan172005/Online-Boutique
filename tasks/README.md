@@ -1,6 +1,21 @@
-# Task files dựng và kiểm tra Kubernetes/Online Boutique
+# Giải thích các task file Ansible
 
-Các file được playbook cha import.
+Các file `.yml` trong folder này là **danh sách task được import vào playbook**, không chạy trực tiếp bằng `ansible-playbook tasks/<file>.yml`. `main.yml` gọi các task dựng cluster; `playbooks/teardown.yml` gọi task gỡ ứng dụng.
+
+Cấu hình cluster lấy từ [../vars/main.yml](../vars/main.yml); cấu hình Online Boutique lấy từ [../vars/microservices.yml](../vars/microservices.yml). Các thao tác trên VM chạy với `become: true` do playbook cha khai báo.
+
+## Luồng sử dụng
+
+| Giai đoạn | Host | Task file theo thứ tự |
+| --- | --- | --- |
+| Chuẩn bị VM | `k8s` | `preflight.yml` → `prepare.yml` → role swap/Docker → `containerd.yml`. |
+| Khởi tạo cluster | `k8s_control_plane` | `control-plane-bootstrap.yml` → `control-plane.yml` → `kubelet.yml` → role Kubernetes → `packages.yml` → `kubeconfig.yml` → `helm.yml`. |
+| Join worker | `k8s_workers` | `kubelet.yml` → `workers.yml` → role Kubernetes → `packages.yml`. |
+| Xác nhận cluster | `k8s_control_plane` | `verify.yml`. |
+| Xác nhận ứng dụng | `k8s_control_plane` | `playbooks/verify.yml` lấy IP của cả hai VM rồi gọi `boutique-verify.yml`. |
+| Gỡ ứng dụng | `k8s_control_plane` | Playbook teardown chuẩn bị Python client rồi gọi `boutique-teardown.yml`. |
+
+`main.yml` còn có task xóa điều kiện bootstrap kubelet tạm thời sau khi role control plane hoàn tất; thao tác đó nằm trực tiếp trong playbook.
 
 ## preflight.yml — Kiểm tra trước khi cấu hình VM
 
@@ -87,3 +102,28 @@ File assert node Ready và InternalIP khớp `hostvars[node].kubernetes_node_ip`
 Cuối cùng, `uri` gọi storefront qua IP private worker từ master, yêu cầu HTTP 200 và nội dung khớp `boutique_storefront_pattern`. URL có thể override bằng `boutique_verify_url`; số lần thử lại/thời gian chờ giữa các lần lấy từ `boutique_verify_retries`/`boutique_verify_delay`. Kết quả in cả URL kiểm tra nội bộ và URL public cho trình duyệt. Các thao tác chỉ đọc vẫn chạy trong check mode, vì vậy `--check` vẫn kiểm tra cluster thật.
 
 Chạy từ root bằng `ansible-playbook playbooks/verify.yml`, không dùng `--limit`. Verification không thay thế thử giỏ hàng/đặt hàng bằng trình duyệt.
+
+## boutique-teardown.yml — Gỡ Online Boutique, giữ cluster
+
+[boutique-teardown.yml](boutique-teardown.yml) được `playbooks/teardown.yml` import, dùng lại `boutique_releases` và `boutique_namespace` từ cấu hình triển khai. File lặp danh sách release theo thứ tự ngược, gọi `kubernetes.core.helm` với `state: absent`, `purge: true`, `wait: true` và `wait_timeout` theo `boutique_timeout`.
+
+Khi chạy thật, `helm_info` tra từng release ở mọi trạng thái và assertion yêu cầu không còn `status`. Sau đó task đọc danh sách node để xác nhận Kubernetes API còn truy cập được. Khi dùng `--check`, block xác nhận này bị bỏ qua.
+
+File giữ namespace, cluster và VM; không chạy `kubeadm reset`. Nó không assert các node đều Ready sau gỡ. Dữ liệu gắn với tài nguyên ứng dụng bị xóa không được sao lưu bởi task này.
+
+## Lệnh dùng cho báo cáo
+
+Chạy từ thư mục gốc project:
+
+```bash
+ansible-playbook main.yml --syntax-check
+ansible-playbook main.yml --tags preflight
+ansible-playbook main.yml
+ansible-playbook playbooks/verify.yml
+
+# Gỡ ứng dụng khi đã hoàn tất demo:
+ansible-playbook playbooks/teardown.yml --syntax-check
+ansible-playbook playbooks/teardown.yml
+```
+
+Mô tả trên dựa vào mã nguồn hiện tại. Các bước chạy thực tế, PLAY RECAP và bằng chứng đáp ứng PDF cần thu thập riêng.
